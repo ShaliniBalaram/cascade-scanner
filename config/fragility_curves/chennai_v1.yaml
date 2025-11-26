@@ -1,0 +1,151 @@
+metadata:
+  version: "1.0"
+  created: "2024-11-26"
+  validated_by: "TN Disaster Management Authority"
+
+fragility_curves:
+  # HOSPITAL CURVES
+  - curve_id: hospital_flood_no_backup
+    asset_type: hospital
+    hazard_type: flood
+    trigger:
+      depth_m: 0.5
+      duration_hours: 2
+    cascade_type: critical_service_disruption
+    probability: 0.85
+    consequence_severity: critical
+    recommended_action: "Pre-position generators; initiate patient evacuation protocol"
+    latency_hours: 2
+    source: "TN Disaster Mgmt Plan 2022"
+
+  - curve_id: hospital_flood_with_backup
+    asset_type: hospital
+    hazard_type: flood
+    trigger:
+      depth_m: 0.8
+      duration_hours: 4
+    cascade_type: partial_service_disruption
+    probability: 0.65
+    consequence_severity: high
+    recommended_action: "Activate backup power; restrict non-emergency admissions"
+    latency_hours: 4
+    source: "Apollo Hospital Emergency SOP"
+
+  # SUBSTATION CURVES
+  - curve_id: substation_flood_230kv
+    asset_type: substation
+    hazard_type: flood
+    trigger:
+      depth_m: 0.4
+      duration_hours: 1
+    cascade_type: power_outage
+    probability: 0.90
+    consequence_severity: critical
+    recommended_action: "De-energize substation; notify TNEB control center"
+    latency_hours: 0.5
+    source: "TNEB Flood Response Manual"
+
+  - curve_id: substation_flood_110kv
+    asset_type: substation
+    hazard_type: flood
+    trigger:
+      depth_m: 0.5
+      duration_hours: 1
+    cascade_type: power_outage
+    probability: 0.85
+    consequence_severity: high
+    recommended_action: "De-energize if water reaches transformer base"
+    latency_hours: 1
+    source: "TNEB Flood Response Manual"
+
+  # WASTEWATER CURVES
+  - curve_id: wwtp_flood_no_backup
+    asset_type: wastewater_plant
+    hazard_type: flood
+    trigger:
+      depth_m: 0.6
+      duration_hours: 3
+    cascade_type: water_contamination
+    probability: 0.80
+    consequence_severity: critical
+    recommended_action: "Activate bypass; alert downstream communities"
+    latency_hours: 3
+    source: "CMWSSB Emergency Protocol"
+
+  - curve_id: wwtp_flood_with_backup
+    asset_type: wastewater_plant
+    hazard_type: flood
+    trigger:
+      depth_m: 1.0
+      duration_hours: 6
+    cascade_type: water_contamination
+    probability: 0.70
+    consequence_severity: high
+    recommended_action: "Monitor effluent quality; prepare bypass"
+    latency_hours: 6
+    source: "CMWSSB Emergency Protocol"
+
+  # ROAD CURVES
+  - curve_id: road_flood_national_highway
+    asset_type: evacuation_route
+    hazard_type: flood
+    trigger:
+      depth_m: 0.3
+      duration_hours: 0.5
+    cascade_type: access_blocked
+    probability: 0.90
+    consequence_severity: high
+    recommended_action: "CLOSE ROAD; activate alternate routes"
+    latency_hours: 0.5
+    source: "Chennai Corp Flood SOP"
+
+  - curve_id: road_flood_arterial
+    asset_type: evacuation_route
+    hazard_type: flood
+    trigger:
+      depth_m: 0.35
+      duration_hours: 1
+    cascade_type: access_blocked
+    probability: 0.85
+    consequence_severity: medium
+    recommended_action: "Issue traffic advisory; prepare for closure"
+    latency_hours: 1
+    source: "Chennai Corp Flood SOP"
+
+  - curve_id: road_flood_expressway
+    asset_type: evacuation_route
+    hazard_type: flood
+    trigger:
+      depth_m: 0.25
+      duration_hours: 0.5
+    cascade_type: access_blocked
+    probability: 0.95
+    consequence_severity: critical
+    recommended_action: "CLOSE EXPRESSWAY immediately"
+    latency_hours: 0.25
+    source: "NHAI Tamil Nadu"
+
+  # CASCADE CURVES
+  - curve_id: hospital_power_cascade
+    asset_type: hospital
+    hazard_type: cascade
+    trigger:
+      upstream_event: power_outage
+    cascade_type: critical_service_disruption
+    probability: 0.75
+    consequence_severity: critical
+    recommended_action: "Verify backup generator; check fuel reserves"
+    latency_hours: 0.5
+    source: "TN Health Dept Emergency Manual"
+
+  - curve_id: road_hospital_access_cascade
+    asset_type: hospital
+    hazard_type: cascade
+    trigger:
+      upstream_event: access_blocked
+    cascade_type: emergency_access_compromised
+    probability: 0.80
+    consequence_severity: high
+    recommended_action: "Alert ambulance services of route change"
+    latency_hours: 1
+    source: "108 Ambulance Service Protocol"

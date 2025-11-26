@@ -1,0 +1,229 @@
+metadata:
+  version: "1.0"
+  created: "2024-11-26"
+  source: "Manual verification + OSM"
+
+assets:
+  # HOSPITALS (5)
+  - asset_id: hospital_rggh
+    name: Rajiv Gandhi Government General Hospital
+    asset_type: hospital
+    lat: 13.0878
+    lon: 80.2785
+    elevation_m: 8.2
+    attributes:
+      beds: 2500
+      backup_power: true
+      criticality: high
+
+  - asset_id: hospital_apollo
+    name: Apollo Hospital Greams Road
+    asset_type: hospital
+    lat: 13.0569
+    lon: 80.2425
+    elevation_m: 10.5
+    attributes:
+      beds: 560
+      backup_power: true
+      criticality: high
+
+  - asset_id: hospital_fortis
+    name: Fortis Malar Hospital
+    asset_type: hospital
+    lat: 13.0244
+    lon: 80.2536
+    elevation_m: 4.8
+    attributes:
+      beds: 180
+      backup_power: true
+      criticality: medium
+
+  - asset_id: hospital_stanley
+    name: Stanley Medical College Hospital
+    asset_type: hospital
+    lat: 13.1148
+    lon: 80.2866
+    elevation_m: 5.1
+    attributes:
+      beds: 1650
+      backup_power: false
+      criticality: high
+
+  - asset_id: hospital_miot
+    name: MIOT International
+    asset_type: hospital
+    lat: 13.0122
+    lon: 80.1696
+    elevation_m: 12.3
+    attributes:
+      beds: 1000
+      backup_power: true
+      criticality: high
+
+  # SUBSTATIONS (3)
+  - asset_id: substation_tondiarpet
+    name: Tondiarpet 230kV Substation
+    asset_type: substation
+    lat: 13.1247
+    lon: 80.2891
+    elevation_m: 3.2
+    attributes:
+      voltage_kv: 230
+      backup_power: false
+      criticality: critical
+
+  - asset_id: substation_kathivakkam
+    name: Kathivakkam 110kV Substation
+    asset_type: substation
+    lat: 13.2147
+    lon: 80.3156
+    elevation_m: 2.8
+    attributes:
+      voltage_kv: 110
+      backup_power: false
+      criticality: high
+
+  - asset_id: substation_porur
+    name: Porur 110kV Substation
+    asset_type: substation
+    lat: 13.0383
+    lon: 80.1572
+    elevation_m: 15.6
+    attributes:
+      voltage_kv: 110
+      backup_power: false
+      criticality: medium
+
+  # WASTEWATER PLANTS (2)
+  - asset_id: wwtp_nesapakkam
+    name: Nesapakkam Sewage Treatment Plant
+    asset_type: wastewater_plant
+    lat: 13.0445
+    lon: 80.1892
+    elevation_m: 11.2
+    attributes:
+      capacity_mld: 54
+      backup_power: true
+      criticality: high
+
+  - asset_id: wwtp_kodungaiyur
+    name: Kodungaiyur Sewage Treatment Plant
+    asset_type: wastewater_plant
+    lat: 13.1312
+    lon: 80.2523
+    elevation_m: 4.5
+    attributes:
+      capacity_mld: 110
+      backup_power: false
+      criticality: critical
+
+  # CRITICAL ROADS (10)
+  - asset_id: road_nh16_kathivakkam
+    name: NH16 Kathivakkam Segment
+    asset_type: evacuation_route
+    lat: 13.2089
+    lon: 80.3012
+    elevation_m: 3.1
+    attributes:
+      road_type: national_highway
+      lanes: 4
+      criticality: critical
+
+  - asset_id: road_nh32_ambattur
+    name: NH32 Ambattur Industrial Segment
+    asset_type: evacuation_route
+    lat: 13.1156
+    lon: 80.1489
+    elevation_m: 18.5
+    attributes:
+      road_type: national_highway
+      lanes: 6
+      criticality: high
+
+  - asset_id: road_ecr_adyar
+    name: ECR Adyar Estuary Crossing
+    asset_type: evacuation_route
+    lat: 13.0012
+    lon: 80.2567
+    elevation_m: 2.4
+    attributes:
+      road_type: state_highway
+      lanes: 4
+      criticality: critical
+
+  - asset_id: road_inner_ring
+    name: Inner Ring Road Velachery Junction
+    asset_type: evacuation_route
+    lat: 12.9756
+    lon: 80.2189
+    elevation_m: 7.8
+    attributes:
+      road_type: ring_road
+      lanes: 6
+      criticality: high
+
+  - asset_id: road_omr_perungudi
+    name: OMR Perungudi IT Corridor
+    asset_type: evacuation_route
+    lat: 12.9612
+    lon: 80.2445
+    elevation_m: 5.2
+    attributes:
+      road_type: state_highway
+      lanes: 6
+      criticality: high
+
+  - asset_id: road_gst_chromepet
+    name: GST Road Chromepet Segment
+    asset_type: evacuation_route
+    lat: 12.9478
+    lon: 80.1412
+    elevation_m: 22.1
+    attributes:
+      road_type: national_highway
+      lanes: 4
+      criticality: medium
+
+  - asset_id: road_anna_salai
+    name: Anna Salai Mount Road
+    asset_type: evacuation_route
+    lat: 13.0623
+    lon: 80.2512
+    elevation_m: 9.8
+    attributes:
+      road_type: arterial
+      lanes: 6
+      criticality: high
+
+  - asset_id: road_poonamallee
+    name: Poonamallee High Road
+    asset_type: evacuation_route
+    lat: 13.0889
+    lon: 80.1123
+    elevation_m: 25.4
+    attributes:
+      road_type: arterial
+      lanes: 4
+      criticality: medium
+
+  - asset_id: road_ennore_expressway
+    name: Ennore Expressway
+    asset_type: evacuation_route
+    lat: 13.2234
+    lon: 80.3189
+    elevation_m: 2.1
+    attributes:
+      road_type: expressway
+      lanes: 4
+      criticality: critical
+
+  - asset_id: road_tambaram_bypass
+    name: Tambaram Bypass Road
+    asset_type: evacuation_route
+    lat: 12.9267
+    lon: 80.1178
+    elevation_m: 28.5
+    attributes:
+      road_type: bypass
+      lanes: 4
+      criticality: medium

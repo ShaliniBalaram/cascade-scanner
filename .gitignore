@@ -1,0 +1,56 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+*-service-account.json
+
+# Logs & Data
+logs/
+*.log
+data/raw/
+data/geotiff/
+data/cache/
+data/sentinel1/
+*.tif
+*.tiff
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Config secrets
+config/gee-service-account.json
+config/*.json
+
+# Database
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/

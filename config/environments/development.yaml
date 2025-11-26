@@ -1,0 +1,73 @@
+app:
+  name: cascade_scanner
+  version: 0.1.0
+  environment: development
+  debug: true
+
+logging:
+  level: DEBUG
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+  rotation: "10 MB"
+  retention: "7 days"
+
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  password: cascade_scanner_2024
+  database: neo4j
+  max_connection_pool_size: 50
+  connection_timeout: 30
+
+postgres:
+  host: localhost
+  port: 5432
+  user: cascade_user
+  password: cascade_pass_2024
+  database: cascade_cache
+  pool_size: 10
+
+gee:
+  project_id: null
+  service_account_key: null
+  cache_ttl_days: 7
+
+imd:
+  base_url: https://rmc.imd.gov.in/
+  cache_ttl_hours: 1
+  timeout_seconds: 30
+  retry_attempts: 3
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  reload: true
+  workers: 1
+  cors_origins:
+    - http://localhost:8501
+    - http://127.0.0.1:8501
+
+ui:
+  port: 8501
+  theme: light
+  map_center:
+    lat: 13.0827
+    lon: 80.2707
+  map_zoom: 11
+
+scanner:
+  default_time_mode: nowcast
+  alert_threshold_probability: 0.75
+  max_results: 50
+  timeout_seconds: 30
+
+chennai:
+  name: Chennai Metropolitan Area
+  bbox:
+    north: 13.25
+    south: 12.85
+    east: 80.35
+    west: 80.05
+  center:
+    lat: 13.0827
+    lon: 80.2707
+  timezone: Asia/Kolkata

@@ -1,0 +1,23 @@
+# Streamlit Cloud Requirements (minimal for UI)
+
+# UI
+streamlit>=1.30.0
+streamlit-folium>=0.17.0
+folium>=0.15.1
+
+# Database
+neo4j>=5.16.0
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.26.0
+
+# HTTP
+requests>=2.31.0
+
+# ML (lightweight)
+scikit-learn>=1.4.0
+
+# Utilities
+python-dotenv>=1.0.0
+loguru>=0.7.0
