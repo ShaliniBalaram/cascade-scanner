@@ -9,6 +9,21 @@ import pandas as pd
 import numpy as np
 import io
 import requests
+import sys
+from pathlib import Path
+
+# Add parent path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Import drought engine
+try:
+    from src.core.drought_engine import (
+        generate_5year_data, calculate_water_budget, assess_drought,
+        generate_farmer_options, generate_admin_triage, SCENARIOS
+    )
+    DROUGHT_ENGINE_AVAILABLE = True
+except ImportError:
+    DROUGHT_ENGINE_AVAILABLE = False
 
 st.set_page_config(
     page_title="Cascade Scanner",
@@ -214,12 +229,15 @@ def main():
     has_secrets = hasattr(st, "secrets") and "neo4j" in st.secrets
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🗺️ Live Scanner",
         "📈 Temporal Analysis",
         "🛰️ Satellite Data",
         "📥 Download Center",
-        "📊 Historical Data"
+        "📊 Historical Data",
+        "🌾 Drought Mode",
+        "👨‍🌾 Farmer View",
+        "🏛️ Admin View"
     ])
 
     with tab1:
@@ -236,6 +254,15 @@ def main():
 
     with tab5:
         render_history_tab()
+
+    with tab6:
+        render_drought_tab()
+
+    with tab7:
+        render_farmer_tab()
+
+    with tab8:
+        render_admin_tab()
 
 
 def render_scanner_tab(has_secrets):
@@ -1253,6 +1280,492 @@ def get_historical_month_data(year: int, month: int) -> dict:
         "daily_series": daily_series,
         "analysis": analysis
     }
+
+
+# ============ DROUGHT MODE TAB ============
+
+def render_drought_tab():
+    """Drought mode with water budget and scenarios."""
+    st.subheader("🌾 Drought Mode - Water Budget Analysis")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Drought engine not available. Please check installation.")
+        return
+
+    st.markdown("Analyze drought conditions using historical scenarios or custom inputs")
+
+    # Scenario selector
+    st.markdown("### Select Scenario")
+    scenario_options = {
+        "2019_drought": "🔴 2019 Chennai Water Crisis",
+        "2021_flood": "🔵 2021 Chennai Floods",
+        "2023_cyclone": "🌀 Cyclone Michaung 2023",
+        "normal_monsoon": "🟢 Normal Monsoon Year",
+        "pre_monsoon_stress": "🟡 Pre-Monsoon Water Stress",
+        "custom": "⚙️ Custom Input"
+    }
+
+    selected_scenario = st.selectbox(
+        "Choose a scenario to analyze",
+        options=list(scenario_options.keys()),
+        format_func=lambda x: scenario_options[x]
+    )
+
+    if selected_scenario != "custom":
+        scenario = SCENARIOS[selected_scenario]
+        conditions = scenario["conditions"]
+
+        st.info(f"**{scenario['name']}** - {scenario['description']}")
+
+        # Display scenario conditions
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rainfall", f"{conditions['rainfall_mm']} mm/day")
+            st.metric("Reservoir", f"{conditions['reservoir_pct']}%")
+        with col2:
+            st.metric("Groundwater", f"{conditions['groundwater_m']} m depth")
+            st.metric("SPI", f"{conditions['spi']:.1f}")
+        with col3:
+            st.metric("NDVI", f"{conditions['ndvi']:.2f}")
+            st.metric("Soil Moisture", f"{conditions['soil_moisture_pct']}%")
+    else:
+        # Custom inputs
+        st.markdown("#### Custom Conditions")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            custom_rainfall = st.slider("Daily Rainfall (mm)", 0, 400, 20)
+            custom_reservoir = st.slider("Reservoir Level (%)", 0, 100, 50)
+        with col2:
+            custom_gw = st.slider("Groundwater Depth (m)", 0, 30, 10)
+            custom_spi = st.slider("SPI", -3.0, 3.0, 0.0, 0.1)
+        with col3:
+            custom_ndvi = st.slider("NDVI", 0.0, 1.0, 0.5, 0.01)
+            custom_soil = st.slider("Soil Moisture (%)", 0, 100, 40)
+
+        conditions = {
+            "rainfall_mm": custom_rainfall,
+            "reservoir_pct": custom_reservoir,
+            "groundwater_m": custom_gw,
+            "spi": custom_spi,
+            "ndvi": custom_ndvi,
+            "soil_moisture_pct": custom_soil
+        }
+
+    st.divider()
+
+    # Run assessment
+    if st.button("🔍 Analyze Conditions", type="primary"):
+        with st.spinner("Analyzing water budget and drought conditions..."):
+            # Drought assessment
+            assessment = assess_drought(
+                spi=conditions["spi"],
+                soil_moisture=conditions["soil_moisture_pct"],
+                reservoir_pct=conditions["reservoir_pct"],
+                ndvi=conditions["ndvi"],
+                current_month=datetime.now().month
+            )
+
+            # Water budget
+            budget = calculate_water_budget(
+                area_ha=50000,  # Chennai metro agricultural area
+                rainfall_mm=conditions["rainfall_mm"],
+                et_mm=5.0,  # Average ET
+                reservoir_pct=conditions["reservoir_pct"],
+                crop_area_ha=30000,
+                crop_water_need_mm=800
+            )
+
+            st.session_state.drought_assessment = assessment
+            st.session_state.water_budget = budget
+
+    # Display results
+    if hasattr(st.session_state, 'drought_assessment'):
+        assessment = st.session_state.drought_assessment
+        budget = st.session_state.water_budget
+
+        st.markdown("### Drought Assessment")
+
+        # Severity indicator
+        severity_colors = {
+            "none": "🟢", "mild": "🟡", "moderate": "🟠",
+            "severe": "🔴", "extreme": "⚫"
+        }
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Severity", f"{severity_colors.get(assessment.severity, '❓')} {assessment.severity.upper()}")
+        with col2:
+            st.metric("Drought Type", assessment.drought_type.title())
+        with col3:
+            st.metric("Weeks to Impact", assessment.weeks_to_impact)
+        with col4:
+            st.metric("Crop Stress", assessment.crop_stress_level.title())
+
+        # Affected area
+        st.progress(assessment.affected_area_pct / 100, text=f"Affected Area: {assessment.affected_area_pct}%")
+
+        # Water Budget
+        st.markdown("### Water Budget (MCM)")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Supply Side**")
+            st.metric("Total Supply", f"{budget.total_supply_mcm} MCM")
+            st.caption(f"• Rainfall: {budget.rainfall_contribution_mcm} MCM")
+            st.caption(f"• Reservoir: {budget.reservoir_storage_mcm} MCM")
+            st.caption(f"• Groundwater: {budget.groundwater_available_mcm} MCM")
+
+        with col2:
+            st.markdown("**Demand Side**")
+            st.metric("Total Demand", f"{budget.total_demand_mcm} MCM")
+            st.caption(f"• Irrigation: {budget.irrigation_demand_mcm} MCM")
+            st.caption(f"• Domestic: {budget.domestic_demand_mcm} MCM")
+            st.caption(f"• ET Loss: {budget.et_loss_mcm} MCM")
+
+        # Deficit/Surplus
+        if budget.deficit_mcm > 0:
+            st.error(f"⚠️ Water Deficit: {budget.deficit_mcm} MCM")
+        else:
+            st.success(f"✅ Water Surplus: {budget.surplus_mcm} MCM")
+
+        # Recommendations
+        st.markdown("### Recommended Actions")
+        for action in assessment.recommended_actions:
+            st.markdown(f"• {action}")
+
+    # 5-Year data visualization
+    st.divider()
+    st.markdown("### 📊 5-Year Historical Data")
+
+    if st.button("Generate 5-Year Dataset"):
+        with st.spinner("Generating synthetic historical data..."):
+            df = generate_5year_data(2019)
+            st.session_state.five_year_data = df
+
+    if hasattr(st.session_state, 'five_year_data'):
+        df = st.session_state.five_year_data
+
+        variable = st.selectbox(
+            "Select Variable to Plot",
+            options=["rainfall_mm", "reservoir_pct", "soil_moisture_pct", "spi", "ndvi", "groundwater_m"],
+            format_func=lambda x: {
+                "rainfall_mm": "Daily Rainfall (mm)",
+                "reservoir_pct": "Reservoir Level (%)",
+                "soil_moisture_pct": "Soil Moisture (%)",
+                "spi": "SPI (Drought Index)",
+                "ndvi": "NDVI (Vegetation)",
+                "groundwater_m": "Groundwater Depth (m)"
+            }[x]
+        )
+
+        # Monthly aggregation for clarity
+        df['month'] = df['date'].dt.to_period('M')
+        monthly = df.groupby('month')[variable].mean().reset_index()
+        monthly['month'] = monthly['month'].dt.to_timestamp()
+
+        st.line_chart(monthly.set_index('month')[variable])
+
+        # Download
+        st.download_button(
+            "📥 Download 5-Year Data (CSV)",
+            data=df.to_csv(index=False),
+            file_name="chennai_5year_hydro_data.csv",
+            mime="text/csv"
+        )
+
+
+# ============ FARMER VIEW TAB ============
+
+def render_farmer_tab():
+    """Farmer decision support panel."""
+    st.subheader("👨‍🌾 Farmer Decision Support")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Decision engine not available. Please check installation.")
+        return
+
+    st.markdown("Get personalized recommendations based on your current situation")
+
+    # Farmer inputs
+    st.markdown("### Your Farm Details")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        farm_area = st.number_input("Farm Area (hectares)", min_value=0.5, max_value=100.0, value=2.0, step=0.5)
+        current_crop = st.selectbox(
+            "Current Crop",
+            options=["paddy", "sugarcane", "cotton", "groundnut", "millets", "pulses"]
+        )
+
+    with col2:
+        crop_stage = st.slider("Days Since Sowing", 0, 120, 45)
+        water_available = st.number_input("Water Available (mm)", min_value=0, max_value=2000, value=500)
+
+    # Current conditions (from session or default)
+    st.markdown("### Current Conditions")
+
+    condition_source = st.radio(
+        "Use conditions from:",
+        options=["Drought Assessment", "Manual Input"],
+        horizontal=True
+    )
+
+    if condition_source == "Drought Assessment" and hasattr(st.session_state, 'drought_assessment'):
+        drought_severity = st.session_state.drought_assessment.severity
+        st.success(f"Using assessed severity: **{drought_severity.upper()}**")
+    else:
+        drought_severity = st.select_slider(
+            "Current Drought Severity",
+            options=["none", "mild", "moderate", "severe", "extreme"],
+            value="moderate"
+        )
+
+    st.divider()
+
+    # Generate options
+    if st.button("💡 Show My Options", type="primary", use_container_width=True):
+        with st.spinner("Analyzing your situation..."):
+            options = generate_farmer_options(
+                current_crop=current_crop,
+                crop_stage_days=crop_stage,
+                water_available_mm=water_available,
+                drought_severity=drought_severity,
+                area_ha=farm_area
+            )
+            st.session_state.farmer_options = options
+
+    # Display options
+    if hasattr(st.session_state, 'farmer_options'):
+        options = st.session_state.farmer_options
+
+        st.markdown("### Your Decision Options")
+
+        for i, opt in enumerate(options):
+            with st.expander(f"**Option {opt.option_id}: {opt.title}**", expanded=(i==0)):
+                st.markdown(f"*{opt.description}*")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Investment Required", f"₹{opt.investment_required:,.0f}")
+                with col2:
+                    st.metric("Expected Return", f"₹{opt.expected_return:,.0f}")
+                with col3:
+                    profit = opt.expected_return - opt.investment_required
+                    st.metric("Net Profit/Loss", f"₹{profit:,.0f}",
+                              delta=f"{(profit/opt.investment_required*100) if opt.investment_required > 0 else 0:.0f}%")
+
+                st.markdown(f"**Risk Level:** {opt.risk_level}")
+                st.progress(opt.probability_success, text=f"Success Probability: {opt.probability_success*100:.0f}%")
+                st.caption(f"Water Required: {opt.water_required_mm:.0f} mm")
+
+        # Comparison table
+        st.markdown("### Comparison Summary")
+        comparison_data = []
+        for opt in options:
+            comparison_data.append({
+                "Option": f"{opt.option_id}: {opt.title}",
+                "Investment (₹)": f"{opt.investment_required:,.0f}",
+                "Return (₹)": f"{opt.expected_return:,.0f}",
+                "Risk": opt.risk_level,
+                "Success %": f"{opt.probability_success*100:.0f}%"
+            })
+        st.dataframe(pd.DataFrame(comparison_data), use_container_width=True)
+
+        # Recommendation
+        st.markdown("### 🎯 Our Recommendation")
+        best_option = max(options, key=lambda x: (x.expected_return - x.investment_required) * x.probability_success)
+        st.success(f"Based on risk-adjusted returns, we recommend **Option {best_option.option_id}: {best_option.title}**")
+
+        # Quick links
+        st.markdown("### 📞 Quick Help")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("**Crop Insurance (PMFBY)**")
+            st.caption("1800-200-2000")
+        with col2:
+            st.markdown("**Agricultural Office**")
+            st.caption("044-2536-7890")
+        with col3:
+            st.markdown("**Water Resources Dept**")
+            st.caption("044-2536-1234")
+
+
+# ============ ADMIN VIEW TAB ============
+
+def render_admin_tab():
+    """Administrator decision support panel."""
+    st.subheader("🏛️ Administrator Triage Panel")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Decision engine not available. Please check installation.")
+        return
+
+    st.markdown("Regional water management and crisis response dashboard")
+
+    # Region selector
+    st.markdown("### Region Configuration")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        region = st.selectbox(
+            "Select District",
+            options=["Chennai Metro", "Kanchipuram", "Thiruvallur", "Chengalpattu", "Custom"]
+        )
+
+        # Pre-set areas for different districts
+        region_areas = {
+            "Chennai Metro": 50000,
+            "Kanchipuram": 80000,
+            "Thiruvallur": 70000,
+            "Chengalpattu": 60000,
+            "Custom": 50000
+        }
+        total_area = st.number_input(
+            "Total Cultivated Area (hectares)",
+            min_value=1000,
+            max_value=200000,
+            value=region_areas.get(region, 50000)
+        )
+
+    with col2:
+        water_available = st.number_input(
+            "Water Available (MCM)",
+            min_value=0.0,
+            max_value=500.0,
+            value=150.0,
+            step=10.0
+        )
+        reservoir_pct = st.slider("Current Reservoir Level (%)", 0, 100, 45)
+
+    # Get drought severity
+    st.markdown("### Current Assessment")
+
+    if hasattr(st.session_state, 'drought_assessment'):
+        drought_severity = st.session_state.drought_assessment.severity
+        st.success(f"Using Drought Mode assessment: **{drought_severity.upper()}**")
+    else:
+        drought_severity = st.select_slider(
+            "Override Drought Severity",
+            options=["none", "mild", "moderate", "severe", "extreme"],
+            value="moderate"
+        )
+
+    st.divider()
+
+    # Generate triage
+    if st.button("📊 Generate Triage Report", type="primary", use_container_width=True):
+        with st.spinner("Generating administrative triage..."):
+            triage = generate_admin_triage(
+                total_area_ha=total_area,
+                water_available_mcm=water_available,
+                drought_severity=drought_severity,
+                reservoir_pct=reservoir_pct
+            )
+            st.session_state.admin_triage = triage
+
+    # Display triage
+    if hasattr(st.session_state, 'admin_triage'):
+        triage = st.session_state.admin_triage
+
+        # Area triage
+        st.markdown("### 🗺️ Area Triage")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Area", f"{triage.total_cultivated_ha:,.0f} ha")
+        with col2:
+            st.metric("Saveable", f"{triage.saveable_area_ha:,.0f} ha",
+                      delta=f"{triage.saveable_area_ha/triage.total_cultivated_ha*100:.0f}%")
+        with col3:
+            st.metric("Partial Save", f"{triage.partial_save_ha:,.0f} ha")
+        with col4:
+            st.metric("Loss Area", f"{triage.loss_area_ha:,.0f} ha",
+                      delta=f"-{triage.loss_area_ha/triage.total_cultivated_ha*100:.0f}%",
+                      delta_color="inverse")
+
+        # Visual breakdown
+        st.markdown("#### Area Distribution")
+        area_data = pd.DataFrame({
+            'Category': ['Saveable', 'Partial Save', 'Loss'],
+            'Hectares': [triage.saveable_area_ha, triage.partial_save_ha, triage.loss_area_ha]
+        })
+        st.bar_chart(area_data.set_index('Category'))
+
+        # Water balance
+        st.markdown("### 💧 Water Balance")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Water Required", f"{triage.water_required_mcm:.1f} MCM")
+        with col2:
+            st.metric("Water Available", f"{triage.water_available_mcm:.1f} MCM")
+        with col3:
+            deficit = triage.water_required_mcm - triage.water_available_mcm
+            if deficit > 0:
+                st.metric("Deficit", f"{deficit:.1f} MCM", delta=f"-{deficit/triage.water_required_mcm*100:.0f}%")
+            else:
+                st.metric("Surplus", f"{-deficit:.1f} MCM", delta=f"+{-deficit/triage.water_required_mcm*100:.0f}%")
+
+        # Financial impact
+        st.markdown("### 💰 Financial Impact")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Compensation Required", f"₹{triage.compensation_required_cr:.1f} Cr")
+        with col2:
+            st.metric("Crops Saved Value", f"₹{triage.crops_saved_value_cr:.1f} Cr")
+        with col3:
+            st.metric("Net Benefit", f"₹{triage.net_benefit_cr:.1f} Cr",
+                      delta="Positive" if triage.net_benefit_cr > 0 else "Negative",
+                      delta_color="normal" if triage.net_benefit_cr > 0 else "inverse")
+
+        # Priority zones
+        st.markdown("### 🎯 Priority Zones")
+        for i, village in enumerate(triage.priority_villages, 1):
+            st.markdown(f"**{i}.** {village}")
+
+        # Action items
+        st.markdown("### 📋 Recommended Actions")
+        for action in triage.recommended_actions:
+            st.markdown(f"- {action}")
+
+        # Export report
+        st.divider()
+
+        report = f"""# Administrative Triage Report
+## {region} - {datetime.now().strftime('%Y-%m-%d')}
+
+### Situation Summary
+- **Drought Severity:** {drought_severity.upper()}
+- **Total Cultivated Area:** {triage.total_cultivated_ha:,.0f} hectares
+- **Water Available:** {triage.water_available_mcm:.1f} MCM
+
+### Area Triage
+- Saveable: {triage.saveable_area_ha:,.0f} ha ({triage.saveable_area_ha/triage.total_cultivated_ha*100:.0f}%)
+- Partial Save: {triage.partial_save_ha:,.0f} ha
+- Loss: {triage.loss_area_ha:,.0f} ha
+
+### Financial Impact
+- Compensation Required: ₹{triage.compensation_required_cr:.1f} Crores
+- Crops Saved Value: ₹{triage.crops_saved_value_cr:.1f} Crores
+- Net Benefit: ₹{triage.net_benefit_cr:.1f} Crores
+
+### Priority Zones
+{chr(10).join([f'{i+1}. {v}' for i, v in enumerate(triage.priority_villages)])}
+
+### Recommended Actions
+{chr(10).join([f'- {a}' for a in triage.recommended_actions])}
+
+---
+*Generated by Cascade Scanner - Decision Support System*
+"""
+
+        st.download_button(
+            "📥 Download Triage Report",
+            data=report,
+            file_name=f"triage_report_{region.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.md",
+            mime="text/markdown"
+        )
 
 
 if __name__ == "__main__":
