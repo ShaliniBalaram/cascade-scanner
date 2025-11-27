@@ -261,20 +261,52 @@ def run_scan(query: str, time_mode: str, stakeholder: str):
         st.success("Scan complete!")
 
 
+def fetch_real_rainfall() -> float:
+    """Fetch real 24h rainfall from Open-Meteo API."""
+    try:
+        lat, lon = 13.0827, 80.2707  # Chennai
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": "precipitation_sum",
+            "past_days": 1,
+            "forecast_days": 1,
+            "timezone": "Asia/Kolkata",
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            daily = data.get("daily", {})
+            precip_values = daily.get("precipitation_sum", [0])
+            # Get yesterday's precipitation (last 24h)
+            if len(precip_values) > 0:
+                return precip_values[0] or 0.0
+        return 0.0
+    except Exception:
+        return 0.0  # Return 0 if API fails
+
+
 def create_scan_result(time_mode: str):
     """Create scan result."""
     assets = get_assets()
 
-    # Simulate current conditions based on season
-    month = datetime.now().month
-    if month in [10, 11, 12]:
-        rainfall = np.random.uniform(5, 45)
-    elif month in [6, 7, 8, 9]:
-        rainfall = np.random.uniform(2, 20)
-    else:
-        rainfall = np.random.uniform(0, 5)
+    # Fetch REAL rainfall data from Open-Meteo
+    rainfall = fetch_real_rainfall()
 
-    depth = rainfall * 0.002  # Simple depth estimation
+    # Estimate depth from rainfall (Chennai drainage model)
+    if rainfall < 30:
+        depth = 0.0
+    elif rainfall < 50:
+        depth = 0.1
+    elif rainfall < 80:
+        depth = 0.25
+    elif rainfall < 120:
+        depth = 0.4
+    elif rainfall < 180:
+        depth = 0.6
+    else:
+        depth = 0.8 + (rainfall - 180) / 200
 
     if rainfall > 50:
         risk = "high"
