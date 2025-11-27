@@ -267,7 +267,7 @@ def render_scanner_tab(has_secrets):
             placeholder="e.g., Show flood risks in Chennai",
         )
 
-        if st.button("🔍 Run Scan", type="primary", width='stretch'):
+        if st.button("🔍 Run Scan", type="primary", use_container_width=True):
             run_scan(query, time_mode, stakeholder)
 
         st.divider()
