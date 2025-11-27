@@ -229,41 +229,29 @@ def main():
     # Check if secrets exist
     has_secrets = hasattr(st, "secrets") and "neo4j" in st.secrets
 
-    # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    # Create tabs - focused on interactive visualization
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🗺️ Live Scanner",
-        "📈 Temporal Analysis",
-        "🛰️ Satellite Data",
-        "📥 Download Center",
-        "📊 Historical Data",
-        "🌾 Drought Mode",
-        "👨‍🌾 Farmer View",
-        "🏛️ Admin View"
+        "📊 Water Dashboard",
+        "🛰️ Satellite Maps",
+        "📈 5-Year Analysis",
+        "🔬 Scenario Explorer"
     ])
 
     with tab1:
         render_scanner_tab(has_secrets)
 
     with tab2:
-        render_temporal_tab()
+        render_water_dashboard()
 
     with tab3:
-        render_satellite_tab()
+        render_satellite_maps()
 
     with tab4:
-        render_download_tab()
+        render_5year_analysis()
 
     with tab5:
-        render_history_tab()
-
-    with tab6:
-        render_drought_tab()
-
-    with tab7:
-        render_farmer_tab()
-
-    with tab8:
-        render_admin_tab()
+        render_scenario_explorer()
 
 
 def render_scanner_tab(has_secrets):
@@ -528,142 +516,681 @@ def render_results():
         st.json(result)
 
 
-def render_satellite_tab():
-    """Satellite and precipitation data access."""
-    st.subheader("🛰️ Satellite & Weather Data")
-    st.markdown("Access real satellite imagery and precipitation data for Chennai")
+# ============ WATER DASHBOARD TAB ============
+
+def render_water_dashboard():
+    """Interactive water budget dashboard with charts."""
+    st.subheader("📊 Water Budget Dashboard")
+    st.markdown("*Interactive visualization of water supply, demand, and projections*")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Visualization engine not available.")
+        return
+
+    # Sidebar controls for the dashboard
+    with st.sidebar:
+        st.header("📊 Dashboard Controls")
+
+        region = st.selectbox(
+            "Region",
+            ["Chennai Metro", "Kanchipuram", "Thiruvallur", "Chengalpattu"],
+            key="dash_region"
+        )
+
+        st.markdown("### Current Conditions")
+        reservoir_pct = st.slider("Reservoir Level (%)", 0, 100, 45, key="dash_res")
+        groundwater_m = st.slider("Groundwater Depth (m)", 0, 30, 12, key="dash_gw")
+        soil_moisture = st.slider("Soil Moisture (%)", 0, 100, 40, key="dash_sm")
+
+        st.markdown("### Demand Parameters")
+        weekly_demand = st.number_input("Weekly Demand (MCM)", 10.0, 100.0, 25.0, key="dash_demand")
+
+    # Generate data on load
+    if 'dashboard_data' not in st.session_state:
+        st.session_state.dashboard_data = None
+
+    if st.button("🔄 Update Dashboard", type="primary", use_container_width=True):
+        with st.spinner("Generating dashboard..."):
+            # Generate projections
+            if reservoir_pct < 20:
+                spi = -2.0
+            elif reservoir_pct < 40:
+                spi = -1.0
+            elif reservoir_pct < 60:
+                spi = 0.0
+            else:
+                spi = 0.5
+
+            projections = generate_projections(
+                current_rainfall_mm=5.0,
+                current_reservoir_pct=reservoir_pct,
+                current_soil_moisture=soil_moisture,
+                spi=spi,
+                weeks_ahead=12
+            )
+
+            # Water budget
+            budget = calculate_water_budget(
+                area_ha=50000,
+                rainfall_mm=5.0,
+                et_mm=5.0,
+                reservoir_pct=reservoir_pct,
+                crop_area_ha=30000,
+                crop_water_need_mm=800
+            )
+
+            st.session_state.dashboard_data = {
+                'projections': projections,
+                'budget': budget,
+                'region': region,
+                'reservoir_pct': reservoir_pct
+            }
+
+    if st.session_state.dashboard_data:
+        data = st.session_state.dashboard_data
+        projections = data['projections']
+        budget = data['budget']
+
+        # Row 1: Key Metrics
+        st.markdown("### Current Status")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Reservoir", f"{data['reservoir_pct']}%",
+                      delta=f"{projections[-1].projected_reservoir_pct - data['reservoir_pct']:.0f}% in 12 weeks")
+        with col2:
+            st.metric("Supply", f"{budget.total_supply_mcm:.0f} MCM")
+        with col3:
+            st.metric("Demand", f"{budget.total_demand_mcm:.0f} MCM")
+        with col4:
+            if budget.deficit_mcm > 0:
+                st.metric("Deficit", f"{budget.deficit_mcm:.0f} MCM", delta="-deficit")
+            else:
+                st.metric("Surplus", f"{budget.surplus_mcm:.0f} MCM", delta="+surplus")
+
+        # Row 2: Supply vs Demand Chart
+        st.markdown("### Supply vs Demand Breakdown")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            supply_df = pd.DataFrame({
+                'Source': ['Rainfall', 'Reservoir', 'Groundwater'],
+                'MCM': [budget.rainfall_contribution_mcm, budget.reservoir_storage_mcm, budget.groundwater_available_mcm]
+            })
+            st.bar_chart(supply_df.set_index('Source'))
+            st.caption("Water Supply Sources (MCM)")
+
+        with col2:
+            demand_df = pd.DataFrame({
+                'Use': ['Irrigation', 'Domestic', 'ET Loss'],
+                'MCM': [budget.irrigation_demand_mcm, budget.domestic_demand_mcm, budget.et_loss_mcm]
+            })
+            st.bar_chart(demand_df.set_index('Use'))
+            st.caption("Water Demand (MCM)")
+
+        # Row 3: 12-Week Projection Charts
+        st.markdown("### 12-Week Projections")
+
+        proj_df = pd.DataFrame([{
+            'Week': p.weeks_ahead,
+            'Reservoir (%)': p.projected_reservoir_pct,
+            'Soil Moisture (%)': p.projected_soil_moisture_pct,
+            'Streamflow (% normal)': p.projected_streamflow_pct,
+            'Cumulative Deficit (mm)': p.cumulative_deficit_mm
+        } for p in projections])
+
+        # Multi-line chart
+        st.line_chart(proj_df.set_index('Week')[['Reservoir (%)', 'Soil Moisture (%)', 'Streamflow (% normal)']])
+
+        # Deficit accumulation
+        st.area_chart(proj_df.set_index('Week')[['Cumulative Deficit (mm)']])
+        st.caption("Projected cumulative water deficit over 12 weeks")
+
+        # Row 4: Critical Dates
+        st.markdown("### Critical Thresholds")
+
+        # Find when reservoir hits thresholds
+        thresholds = [50, 30, 20, 10]
+        threshold_weeks = {}
+        for thresh in thresholds:
+            for p in projections:
+                if p.projected_reservoir_pct < thresh and thresh not in threshold_weeks:
+                    threshold_weeks[thresh] = p.weeks_ahead
+
+        if threshold_weeks:
+            thresh_df = pd.DataFrame([
+                {'Threshold': f'Reservoir < {k}%', 'Projected Week': v}
+                for k, v in sorted(threshold_weeks.items(), reverse=True)
+            ])
+            st.dataframe(thresh_df, use_container_width=True)
+        else:
+            st.success("Reservoir level stable above 50% for 12 weeks")
+
+        # Download data
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Projections (CSV)",
+                data=proj_df.to_csv(index=False),
+                file_name="water_projections.csv",
+                mime="text/csv"
+            )
+        with col2:
+            st.download_button(
+                "📥 Download Budget (JSON)",
+                data=json.dumps({
+                    'supply': budget.total_supply_mcm,
+                    'demand': budget.total_demand_mcm,
+                    'deficit': budget.deficit_mcm,
+                    'surplus': budget.surplus_mcm
+                }, indent=2),
+                file_name="water_budget.json",
+                mime="application/json"
+            )
+
+
+# ============ SATELLITE MAPS TAB ============
+
+def render_satellite_maps():
+    """Interactive satellite-derived maps and indices."""
+    st.subheader("🛰️ Satellite-Derived Maps")
+    st.markdown("*Spatial visualization of vegetation, water, and drought indices*")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Satellite engine not available.")
+        return
+
+    # Load satellite data
+    if 'sat_map_data' not in st.session_state:
+        st.session_state.sat_map_data = None
+
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        st.markdown("### Map Controls")
+
+        index_type = st.selectbox(
+            "Index to Display",
+            ["NDVI (Vegetation)", "NDWI (Water)", "LST (Temperature)", "Soil Moisture", "Combined Stress"]
+        )
+
+        time_period = st.selectbox(
+            "Time Period",
+            ["Current (Latest)", "Last Week", "Last Month", "Compare Two Dates"]
+        )
+
+        if st.button("🗺️ Generate Map", type="primary", use_container_width=True):
+            with st.spinner("Generating satellite map..."):
+                # Generate satellite observations
+                sat_obs = generate_satellite_observations(datetime.now(), 30)
+                st.session_state.sat_map_data = sat_obs
+
+    with col2:
+        if st.session_state.sat_map_data:
+            obs = st.session_state.sat_map_data
+
+            # Create map with Chennai districts
+            m = folium.Map(location=[13.0827, 80.2707], zoom_start=10, tiles="CartoDB positron")
+
+            # Chennai district boundaries (approximate centroids)
+            districts = [
+                {"name": "North Chennai", "lat": 13.15, "lon": 80.28, "area": "industrial"},
+                {"name": "Central Chennai", "lat": 13.08, "lon": 80.27, "area": "urban"},
+                {"name": "South Chennai", "lat": 13.00, "lon": 80.25, "area": "residential"},
+                {"name": "West Chennai", "lat": 13.05, "lon": 80.18, "area": "suburban"},
+                {"name": "Tambaram", "lat": 12.92, "lon": 80.12, "area": "agricultural"},
+                {"name": "Avadi", "lat": 13.11, "lon": 80.10, "area": "mixed"},
+                {"name": "Ambattur", "lat": 13.10, "lon": 80.15, "area": "industrial"},
+                {"name": "Tiruvottiyur", "lat": 13.16, "lon": 80.30, "area": "coastal"},
+            ]
+
+            # Get latest observation
+            latest = obs[-1] if obs else None
+
+            # Color based on index
+            for dist in districts:
+                # Generate realistic values per district
+                np.random.seed(hash(dist['name']) % 2**32)
+
+                if "NDVI" in index_type:
+                    base_val = latest.ndvi if latest else 0.4
+                    value = base_val + np.random.uniform(-0.1, 0.1)
+                    if value > 0.5:
+                        color = 'green'
+                        status = 'Healthy'
+                    elif value > 0.3:
+                        color = 'orange'
+                        status = 'Moderate Stress'
+                    else:
+                        color = 'red'
+                        status = 'Severe Stress'
+                    display_val = f"NDVI: {value:.2f}"
+
+                elif "NDWI" in index_type:
+                    base_val = latest.ndwi if latest else 0.1
+                    value = base_val + np.random.uniform(-0.15, 0.15)
+                    if value > 0.2:
+                        color = 'blue'
+                        status = 'High Water'
+                    elif value > 0:
+                        color = 'lightblue'
+                        status = 'Normal'
+                    else:
+                        color = 'brown'
+                        status = 'Low Water'
+                    display_val = f"NDWI: {value:.2f}"
+
+                elif "LST" in index_type:
+                    base_val = latest.lst_celsius if latest else 35
+                    value = base_val + np.random.uniform(-3, 3)
+                    if value > 40:
+                        color = 'red'
+                        status = 'Very Hot'
+                    elif value > 35:
+                        color = 'orange'
+                        status = 'Hot'
+                    else:
+                        color = 'green'
+                        status = 'Moderate'
+                    display_val = f"LST: {value:.1f}°C"
+
+                elif "Soil" in index_type:
+                    base_val = latest.soil_moisture_pct if latest else 40
+                    value = base_val + np.random.uniform(-10, 10)
+                    if value > 60:
+                        color = 'blue'
+                        status = 'Wet'
+                    elif value > 30:
+                        color = 'green'
+                        status = 'Adequate'
+                    else:
+                        color = 'red'
+                        status = 'Dry'
+                    display_val = f"Soil: {value:.0f}%"
+
+                else:  # Combined stress
+                    ndvi = (latest.ndvi if latest else 0.4) + np.random.uniform(-0.1, 0.1)
+                    sm = (latest.soil_moisture_pct if latest else 40) + np.random.uniform(-10, 10)
+                    stress = (1 - ndvi) * 50 + (100 - sm) * 0.5  # Higher = more stress
+                    if stress > 60:
+                        color = 'red'
+                        status = 'High Stress'
+                    elif stress > 40:
+                        color = 'orange'
+                        status = 'Moderate Stress'
+                    else:
+                        color = 'green'
+                        status = 'Low Stress'
+                    display_val = f"Stress Index: {stress:.0f}"
+
+                folium.CircleMarker(
+                    location=[dist['lat'], dist['lon']],
+                    radius=20,
+                    color=color,
+                    fill=True,
+                    fillColor=color,
+                    fillOpacity=0.6,
+                    popup=f"<b>{dist['name']}</b><br>{display_val}<br>Status: {status}<br>Type: {dist['area']}"
+                ).add_to(m)
+
+            # Add legend
+            legend_html = f'''
+            <div style="position: fixed; bottom: 50px; left: 50px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; border: 1px solid gray;">
+                <b>{index_type}</b><br>
+                <span style="color: green;">●</span> Good/Healthy<br>
+                <span style="color: orange;">●</span> Moderate<br>
+                <span style="color: red;">●</span> Stressed/Critical
+            </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            st_folium(m, width=800, height=500)
+
+    # Time series below map
+    if st.session_state.sat_map_data:
+        st.divider()
+        st.markdown("### Satellite Index Time Series (Last 30 Days)")
+
+        obs = st.session_state.sat_map_data
+        sat_df = pd.DataFrame([{
+            'Date': o.date,
+            'NDVI': o.ndvi,
+            'NDWI': o.ndwi,
+            'LST (°C)': o.lst_celsius,
+            'Soil Moisture (%)': o.soil_moisture_pct,
+            'ET (mm/day)': o.evapotranspiration_mm
+        } for o in obs])
+
+        # Multi-select for indices
+        indices_to_plot = st.multiselect(
+            "Select indices to plot",
+            ['NDVI', 'NDWI', 'Soil Moisture (%)', 'ET (mm/day)'],
+            default=['NDVI', 'Soil Moisture (%)']
+        )
+
+        if indices_to_plot:
+            chart_df = sat_df[['Date'] + indices_to_plot].set_index('Date')
+            st.line_chart(chart_df)
+
+        # Data table
+        with st.expander("View Raw Satellite Data"):
+            st.dataframe(sat_df, use_container_width=True)
+
+            st.download_button(
+                "📥 Download Satellite Data (CSV)",
+                data=sat_df.to_csv(index=False),
+                file_name="satellite_observations.csv",
+                mime="text/csv"
+            )
+
+
+# ============ 5-YEAR ANALYSIS TAB ============
+
+def render_5year_analysis():
+    """Interactive 5-year historical analysis."""
+    st.subheader("📈 5-Year Historical Analysis")
+    st.markdown("*Explore trends in rainfall, reservoir, drought indices from 2019-2023*")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Analysis engine not available.")
+        return
+
+    # Generate or load 5-year data
+    if 'five_year_df' not in st.session_state:
+        with st.spinner("Generating 5-year synthetic dataset..."):
+            st.session_state.five_year_df = generate_5year_data(2019)
+
+    df = st.session_state.five_year_df
+
+    # Controls
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        year_range = st.slider(
+            "Select Year Range",
+            min_value=2019,
+            max_value=2023,
+            value=(2019, 2023)
+        )
+
+    with col2:
+        aggregation = st.selectbox(
+            "Aggregation",
+            ["Daily", "Weekly", "Monthly"]
+        )
+
+    with col3:
+        variables = st.multiselect(
+            "Variables to Plot",
+            ["rainfall_mm", "reservoir_pct", "soil_moisture_pct", "spi", "ndvi", "groundwater_m", "et_mm"],
+            default=["rainfall_mm", "reservoir_pct"]
+        )
+
+    # Filter data
+    filtered_df = df[(df['year'] >= year_range[0]) & (df['year'] <= year_range[1])].copy()
+
+    # Aggregate
+    if aggregation == "Weekly":
+        filtered_df['period'] = filtered_df['date'].dt.to_period('W')
+        agg_df = filtered_df.groupby('period')[variables].mean().reset_index()
+        agg_df['date'] = agg_df['period'].dt.to_timestamp()
+    elif aggregation == "Monthly":
+        filtered_df['period'] = filtered_df['date'].dt.to_period('M')
+        agg_df = filtered_df.groupby('period')[variables].mean().reset_index()
+        agg_df['date'] = agg_df['period'].dt.to_timestamp()
+    else:
+        agg_df = filtered_df
+
+    # Main time series chart
+    st.markdown("### Time Series")
+    if variables:
+        chart_df = agg_df[['date'] + variables].set_index('date')
+        st.line_chart(chart_df)
+
+    # Year-over-year comparison
+    st.divider()
+    st.markdown("### Year-over-Year Comparison")
+
+    compare_var = st.selectbox(
+        "Variable to Compare",
+        ["rainfall_mm", "reservoir_pct", "soil_moisture_pct", "spi", "ndvi"],
+        key="compare_var"
+    )
+
+    # Monthly means by year
+    monthly_by_year = df.groupby(['year', 'month'])[compare_var].mean().reset_index()
+    pivot_df = monthly_by_year.pivot(index='month', columns='year', values=compare_var)
+
+    st.line_chart(pivot_df)
+    st.caption(f"Monthly average {compare_var} by year (Jan=1, Dec=12)")
+
+    # Statistics table
+    st.divider()
+    st.markdown("### Annual Statistics")
+
+    annual_stats = df.groupby('year').agg({
+        'rainfall_mm': ['sum', 'max', 'mean'],
+        'reservoir_pct': 'mean',
+        'spi': 'mean',
+        'ndvi': 'mean'
+    }).round(2)
+    annual_stats.columns = ['Total Rain (mm)', 'Max Daily Rain (mm)', 'Avg Daily Rain (mm)',
+                            'Avg Reservoir (%)', 'Avg SPI', 'Avg NDVI']
+    st.dataframe(annual_stats, use_container_width=True)
+
+    # Highlight extreme events
+    st.markdown("### Notable Events")
+
+    # Find extreme rainfall days
+    extreme_days = df[df['rainfall_mm'] > 100].sort_values('rainfall_mm', ascending=False).head(10)
+    if not extreme_days.empty:
+        st.markdown("**Extreme Rainfall Events (>100mm/day)**")
+        st.dataframe(extreme_days[['date', 'rainfall_mm', 'reservoir_pct', 'spi']].head(10), use_container_width=True)
+
+    # Find lowest reservoir levels
+    low_reservoir = df[df['reservoir_pct'] < 15].sort_values('reservoir_pct').head(10)
+    if not low_reservoir.empty:
+        st.markdown("**Critical Low Reservoir Days (<15%)**")
+        st.dataframe(low_reservoir[['date', 'reservoir_pct', 'groundwater_m', 'spi']].head(10), use_container_width=True)
+
+    # Download
+    st.divider()
+    st.download_button(
+        "📥 Download 5-Year Dataset (CSV)",
+        data=df.to_csv(index=False),
+        file_name="chennai_5year_hydro_data.csv",
+        mime="text/csv"
+    )
+
+
+# ============ SCENARIO EXPLORER TAB ============
+
+def render_scenario_explorer():
+    """Compare different drought/flood scenarios side by side."""
+    st.subheader("🔬 Scenario Explorer")
+    st.markdown("*Compare different historical and hypothetical scenarios*")
+
+    if not DROUGHT_ENGINE_AVAILABLE:
+        st.error("Scenario engine not available.")
+        return
+
+    st.markdown("### Select Scenarios to Compare")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 🌧️ Precipitation Data")
-        st.markdown("*Source: Open-Meteo (ERA5 reanalysis + ECMWF forecast)*")
-
-        precip_days = st.selectbox(
-            "Period",
-            options=[7, 14, 30, 60, 90],
-            index=2,
-            format_func=lambda x: f"Last {x} days"
+        scenario1 = st.selectbox(
+            "Scenario 1",
+            list(SCENARIOS.keys()),
+            format_func=lambda x: SCENARIOS[x]['name'],
+            key="sc1"
         )
 
-        if st.button("📥 Download Precipitation Data", type="primary", key="precip_btn"):
-            with st.spinner("Fetching precipitation data from Open-Meteo..."):
-                precip_result = fetch_precipitation_data(precip_days)
-                st.session_state.precip_data = precip_result
-
-        if hasattr(st.session_state, 'precip_data'):
-            data = st.session_state.precip_data
-            if "error" not in data:
-                st.success(f"✅ Data retrieved: {data['period_days']} days")
-
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.metric("Total Rainfall", f"{data['total_mm']:.1f} mm")
-                with m2:
-                    st.metric("Max Daily", f"{data['max_daily_mm']:.1f} mm")
-                with m3:
-                    st.metric("Rainy Days", data['rainy_days'])
-
-                # Chart
-                if data.get('daily_data'):
-                    df = pd.DataFrame(data['daily_data'])
-                    df['date'] = pd.to_datetime(df['date'])
-                    st.line_chart(df.set_index('date')['precipitation_mm'])
-
-                # Download buttons
-                st.markdown("#### Download Files")
-                csv_data = "date,precipitation_mm\n"
-                for d in data.get('daily_data', []):
-                    csv_data += f"{d['date']},{d['precipitation_mm']}\n"
-
-                st.download_button(
-                    "📊 Download CSV",
-                    data=csv_data,
-                    file_name=f"chennai_precipitation_{precip_days}days.csv",
-                    mime="text/csv"
-                )
-
-                st.download_button(
-                    "📄 Download JSON",
-                    data=json.dumps(data, indent=2),
-                    file_name=f"chennai_precipitation_{precip_days}days.json",
-                    mime="application/json"
-                )
-            else:
-                st.error(f"Error: {data['error']}")
-
     with col2:
-        st.markdown("### 🛰️ Sentinel-1 SAR Data")
-        st.markdown("*Source: ESA Copernicus via Google Earth Engine*")
+        scenario2 = st.selectbox(
+            "Scenario 2",
+            list(SCENARIOS.keys()),
+            index=1,
+            format_func=lambda x: SCENARIOS[x]['name'],
+            key="sc2"
+        )
 
-        sat_year = st.selectbox("Year", options=list(range(2024, 2014, -1)), index=0, key="sat_year")
-        sat_month = st.selectbox("Month", options=list(range(1, 13)),
-                                 index=datetime.now().month - 1,
-                                 format_func=lambda x: datetime(2000, x, 1).strftime("%B"),
-                                 key="sat_month")
+    if st.button("📊 Compare Scenarios", type="primary", use_container_width=True):
+        sc1 = SCENARIOS[scenario1]
+        sc2 = SCENARIOS[scenario2]
 
-        st.info("""
-**Note:** Sentinel-1 SAR data requires Google Earth Engine access.
-- Revisit cycle: 6-12 days
-- Resolution: 10m
-- Bands: VV, VH (polarization)
-        """)
+        st.divider()
 
-        if st.button("🔍 Check Available Imagery", key="sat_btn"):
-            with st.spinner("Checking Sentinel-1 availability..."):
-                sat_result = check_satellite_availability(sat_year, sat_month)
-                st.session_state.sat_data = sat_result
+        # Side by side comparison
+        col1, col2 = st.columns(2)
 
-        if hasattr(st.session_state, 'sat_data'):
-            data = st.session_state.sat_data
-            if data.get('available'):
-                st.success(f"✅ {data['count']} images available")
+        with col1:
+            st.markdown(f"### {sc1['name']}")
+            st.caption(sc1['description'])
 
-                st.markdown("#### Available Passes")
-                for img in data.get('images', [])[:10]:
-                    st.markdown(f"- **{img['date']}** - {img['mode']} mode")
+            cond1 = sc1['conditions']
+            st.metric("Rainfall", f"{cond1['rainfall_mm']} mm/day")
+            st.metric("Reservoir", f"{cond1['reservoir_pct']}%")
+            st.metric("Groundwater", f"{cond1['groundwater_m']} m")
+            st.metric("SPI", f"{cond1['spi']:.1f}")
+            st.metric("NDVI", f"{cond1['ndvi']:.2f}")
+            st.metric("Soil Moisture", f"{cond1['soil_moisture_pct']}%")
 
-                if st.button("📥 Download Latest GeoTIFF", key="download_sat"):
-                    st.warning("⚠️ GeoTIFF download requires GEE authentication. Use the local app for full functionality.")
-                    st.code("""
-# Run locally to download:
-cd cascade_scanner
-python scripts/download_data.py
-                    """)
+        with col2:
+            st.markdown(f"### {sc2['name']}")
+            st.caption(sc2['description'])
+
+            cond2 = sc2['conditions']
+            st.metric("Rainfall", f"{cond2['rainfall_mm']} mm/day",
+                      delta=f"{cond2['rainfall_mm'] - cond1['rainfall_mm']:.1f}")
+            st.metric("Reservoir", f"{cond2['reservoir_pct']}%",
+                      delta=f"{cond2['reservoir_pct'] - cond1['reservoir_pct']:.1f}%")
+            st.metric("Groundwater", f"{cond2['groundwater_m']} m",
+                      delta=f"{cond2['groundwater_m'] - cond1['groundwater_m']:.1f}m")
+            st.metric("SPI", f"{cond2['spi']:.1f}",
+                      delta=f"{cond2['spi'] - cond1['spi']:.1f}")
+            st.metric("NDVI", f"{cond2['ndvi']:.2f}",
+                      delta=f"{cond2['ndvi'] - cond1['ndvi']:.2f}")
+            st.metric("Soil Moisture", f"{cond2['soil_moisture_pct']}%",
+                      delta=f"{cond2['soil_moisture_pct'] - cond1['soil_moisture_pct']:.0f}%")
+
+        # Radar chart comparison
+        st.divider()
+        st.markdown("### Visual Comparison")
+
+        # Normalize values for comparison chart
+        compare_df = pd.DataFrame({
+            'Variable': ['Rainfall', 'Reservoir', 'Soil Moisture', 'NDVI x 100', 'GW Depth (inv)'],
+            sc1['name']: [
+                min(cond1['rainfall_mm'] / 3.5, 100),  # Scale to 0-100
+                cond1['reservoir_pct'],
+                cond1['soil_moisture_pct'],
+                cond1['ndvi'] * 100,
+                100 - min(cond1['groundwater_m'] * 3.3, 100)  # Invert so higher = better
+            ],
+            sc2['name']: [
+                min(cond2['rainfall_mm'] / 3.5, 100),
+                cond2['reservoir_pct'],
+                cond2['soil_moisture_pct'],
+                cond2['ndvi'] * 100,
+                100 - min(cond2['groundwater_m'] * 3.3, 100)
+            ]
+        })
+
+        st.bar_chart(compare_df.set_index('Variable'))
+
+        # Generate projections for both
+        st.divider()
+        st.markdown("### 8-Week Projections")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            proj1 = generate_projections(
+                cond1['rainfall_mm'], cond1['reservoir_pct'],
+                cond1['soil_moisture_pct'], cond1['spi'], 8
+            )
+            proj1_df = pd.DataFrame([{
+                'Week': p.weeks_ahead,
+                'Reservoir': p.projected_reservoir_pct,
+                'Soil Moisture': p.projected_soil_moisture_pct
+            } for p in proj1])
+            st.markdown(f"**{sc1['name']}**")
+            st.line_chart(proj1_df.set_index('Week'))
+
+        with col2:
+            proj2 = generate_projections(
+                cond2['rainfall_mm'], cond2['reservoir_pct'],
+                cond2['soil_moisture_pct'], cond2['spi'], 8
+            )
+            proj2_df = pd.DataFrame([{
+                'Week': p.weeks_ahead,
+                'Reservoir': p.projected_reservoir_pct,
+                'Soil Moisture': p.projected_soil_moisture_pct
+            } for p in proj2])
+            st.markdown(f"**{sc2['name']}**")
+            st.line_chart(proj2_df.set_index('Week'))
+
+        # Water budget comparison
+        st.divider()
+        st.markdown("### Water Budget Comparison")
+
+        budget1 = calculate_water_budget(50000, cond1['rainfall_mm'], 5.0, cond1['reservoir_pct'], 30000, 800)
+        budget2 = calculate_water_budget(50000, cond2['rainfall_mm'], 5.0, cond2['reservoir_pct'], 30000, 800)
+
+        budget_df = pd.DataFrame({
+            'Metric': ['Total Supply (MCM)', 'Total Demand (MCM)', 'Deficit (MCM)', 'Surplus (MCM)'],
+            sc1['name']: [budget1.total_supply_mcm, budget1.total_demand_mcm, budget1.deficit_mcm, budget1.surplus_mcm],
+            sc2['name']: [budget2.total_supply_mcm, budget2.total_demand_mcm, budget2.deficit_mcm, budget2.surplus_mcm]
+        })
+
+        st.dataframe(budget_df, use_container_width=True)
+
+        # Interactive map showing scenario on geography
+        st.divider()
+        st.markdown("### Spatial Impact Visualization")
+
+        scenario_to_map = st.radio(
+            "Show scenario impact on map:",
+            [sc1['name'], sc2['name']],
+            horizontal=True
+        )
+
+        selected_cond = cond1 if scenario_to_map == sc1['name'] else cond2
+
+        m = folium.Map(location=[13.0827, 80.2707], zoom_start=10, tiles="CartoDB positron")
+
+        # Districts with varying impact
+        districts = [
+            {"name": "North Chennai", "lat": 13.15, "lon": 80.28},
+            {"name": "Central Chennai", "lat": 13.08, "lon": 80.27},
+            {"name": "South Chennai", "lat": 13.00, "lon": 80.25},
+            {"name": "Tambaram", "lat": 12.92, "lon": 80.12},
+            {"name": "Avadi", "lat": 13.11, "lon": 80.10},
+        ]
+
+        for dist in districts:
+            np.random.seed(hash(dist['name']) % 2**32)
+            stress = (100 - selected_cond['reservoir_pct']) * 0.5 + (30 - selected_cond['groundwater_m']) * -2
+            stress += np.random.uniform(-10, 10)
+
+            if stress > 50:
+                color = 'red'
+            elif stress > 25:
+                color = 'orange'
             else:
-                st.warning(data.get('message', 'No data available'))
+                color = 'green'
 
-    # Data sources info
-    st.divider()
-    st.markdown("### 📋 Data Source Information")
+            folium.CircleMarker(
+                location=[dist['lat'], dist['lon']],
+                radius=15,
+                color=color,
+                fill=True,
+                fillOpacity=0.6,
+                popup=f"<b>{dist['name']}</b><br>Stress Level: {stress:.0f}"
+            ).add_to(m)
 
-    sources_df = pd.DataFrame([
-        {
-            "Data Type": "Precipitation",
-            "Source": "Open-Meteo API",
-            "Provider": "ERA5 Reanalysis + ECMWF",
-            "Resolution": "~9km",
-            "Latency": "Real-time to 5 days",
-            "Access": "Free, no auth required"
-        },
-        {
-            "Data Type": "SAR Imagery",
-            "Source": "Sentinel-1 GRD",
-            "Provider": "ESA Copernicus via GEE",
-            "Resolution": "10m",
-            "Latency": "6-12 day revisit",
-            "Access": "Free, GEE auth required"
-        },
-        {
-            "Data Type": "Flood Detection",
-            "Source": "Sentinel-1 SAR",
-            "Provider": "Processed VV/VH bands",
-            "Resolution": "10-30m",
-            "Latency": "1-3 days processing",
-            "Access": "Via GEE"
-        }
-    ])
-    st.dataframe(sources_df, use_container_width=True)
+        st_folium(m, width=700, height=400)
 
 
 def fetch_precipitation_data(days_back: int) -> dict:
@@ -844,1014 +1371,6 @@ def check_satellite_availability(year: int, month: int) -> dict:
         "images": images,
         "note": "Estimated availability (GEE not configured - add credentials in Streamlit secrets)"
     }
-
-
-def render_temporal_tab():
-    """Temporal analysis."""
-    st.subheader("📈 Temporal Analysis")
-    st.markdown("Analyze flood risk trends over time")
-
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        st.markdown("### Analysis Settings")
-        period = st.selectbox(
-            "Analysis Period",
-            ["Last 7 days", "Last 30 days", "Last 90 days"],
-            index=1
-        )
-
-        days_map = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}
-        days_back = days_map[period]
-
-        if st.button("🔄 Analyze Trends", type="primary"):
-            with st.spinner("Analyzing..."):
-                analysis = analyze_temporal_data(days_back)
-                st.session_state.temporal_analysis = analysis
-
-    with col2:
-        if hasattr(st.session_state, 'temporal_analysis'):
-            analysis = st.session_state.temporal_analysis
-
-            st.markdown("### Trend Summary")
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Total Rainfall", f"{analysis['total_rainfall_mm']} mm")
-            with m2:
-                st.metric("Avg Daily", f"{analysis['avg_daily_mm']} mm")
-            with m3:
-                st.metric("High Risk Days", analysis['high_risk_days'])
-            with m4:
-                st.metric("Rainy Days", analysis['rainy_days'])
-
-            st.markdown("### Trend Indicators")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                trend_emoji = {"increasing": "📈", "decreasing": "📉", "stable": "➡️"}.get(analysis['trend'], "❓")
-                st.info(f"**Rainfall Trend:** {trend_emoji} {analysis['trend'].title()}")
-            with col_b:
-                st.info(f"**Season:** {analysis['monsoon_status']}")
-
-    # Chart
-    if hasattr(st.session_state, 'temporal_analysis'):
-        st.divider()
-        st.markdown("### Rainfall Time Series")
-        df = pd.DataFrame(st.session_state.temporal_analysis['series'])
-        df['date'] = pd.to_datetime(df['date'])
-        st.line_chart(df.set_index('date')['rainfall_mm'])
-
-
-def render_download_tab():
-    """Download center."""
-    st.subheader("📥 Download Center")
-    st.markdown("Export scan results and analysis data")
-
-    result = st.session_state.last_result
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### Current Scan Results")
-
-        if result:
-            st.download_button(
-                "📄 Download JSON",
-                data=json.dumps(result, indent=2),
-                file_name=f"cascade_scan_{result['event_id']}.json",
-                mime="application/json",
-                use_container_width=True
-            )
-
-            report = f"""# Cascade Scanner Report
-## Event: {result['event_id']}
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-## Hazard Conditions
-- **Location:** {result['location']}
-- **24h Rainfall:** {result['hazard']['rainfall_24h_mm']} mm
-- **Flood Depth:** {result['hazard']['depth_m']} m
-- **Risk Level:** {result['hazard']['risk_level'].upper()}
-
-## Summary
-{result['summary']}
-
----
-*Generated by Cascade Scanner*
-"""
-            st.download_button(
-                "📝 Download Report (MD)",
-                data=report,
-                file_name=f"cascade_report_{result['event_id']}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        else:
-            st.info("Run a scan first to enable downloads")
-
-    with col2:
-        st.markdown("### Temporal Analysis Data")
-
-        if hasattr(st.session_state, 'temporal_analysis'):
-            analysis = st.session_state.temporal_analysis
-
-            st.download_button(
-                "📈 Download Analysis JSON",
-                data=json.dumps(analysis, indent=2, default=str),
-                file_name=f"temporal_analysis.json",
-                mime="application/json",
-                use_container_width=True
-            )
-
-            df = pd.DataFrame(analysis['series'])
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-
-            st.download_button(
-                "📊 Download Time Series CSV",
-                data=csv_buffer.getvalue(),
-                file_name="timeseries.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        else:
-            st.info("Run temporal analysis first")
-
-        st.divider()
-        if st.session_state.scan_history:
-            st.download_button(
-                "📜 Download Scan History",
-                data=json.dumps(st.session_state.scan_history, indent=2),
-                file_name="scan_history.json",
-                mime="application/json",
-                use_container_width=True
-            )
-
-
-def render_history_tab():
-    """Historical data lookup."""
-    st.subheader("📊 Historical Data Lookup")
-    st.markdown("Check flood conditions for any specific date or month in history")
-
-    # Date lookup section
-    st.markdown("### 🔍 Lookup Specific Date")
-    col1, col2, col3 = st.columns([1, 1, 1])
-
-    with col1:
-        lookup_year = st.selectbox(
-            "Year",
-            options=list(range(2024, 2010, -1)),
-            index=0
-        )
-
-    with col2:
-        months = ["January", "February", "March", "April", "May", "June",
-                  "July", "August", "September", "October", "November", "December"]
-        lookup_month = st.selectbox("Month", options=months, index=datetime.now().month - 1)
-        month_num = months.index(lookup_month) + 1
-
-    with col3:
-        # Get days in selected month
-        import calendar
-        days_in_month = calendar.monthrange(lookup_year, month_num)[1]
-        lookup_day = st.selectbox("Day (optional)", options=["Entire Month"] + list(range(1, days_in_month + 1)))
-
-    if st.button("🔍 Lookup Historical Data", type="primary"):
-        if lookup_day == "Entire Month":
-            # Get entire month data
-            historical_data = get_historical_month_data(lookup_year, month_num)
-            st.session_state.historical_lookup = {
-                "type": "month",
-                "year": lookup_year,
-                "month": lookup_month,
-                "data": historical_data
-            }
-        else:
-            # Get specific date data
-            historical_data = get_historical_date_data(lookup_year, month_num, lookup_day)
-            st.session_state.historical_lookup = {
-                "type": "date",
-                "year": lookup_year,
-                "month": lookup_month,
-                "day": lookup_day,
-                "data": historical_data
-            }
-
-    # Display results
-    if hasattr(st.session_state, 'historical_lookup'):
-        lookup = st.session_state.historical_lookup
-        st.divider()
-
-        if lookup["type"] == "date":
-            st.markdown(f"### Conditions on {lookup['month']} {lookup['day']}, {lookup['year']}")
-            data = lookup["data"]
-
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Rainfall", f"{data['rainfall_mm']:.1f} mm")
-            with col2:
-                st.metric("Risk Level", data['risk_level'].upper())
-            with col3:
-                st.metric("Flood Depth", f"{data['flood_depth_m']:.2f} m")
-            with col4:
-                st.metric("Alert Level", data['alert_level'])
-
-            # Detailed analysis
-            st.markdown("#### Analysis")
-            st.info(data['analysis'])
-
-            # Historical events
-            if data.get('notable_events'):
-                st.markdown("#### Notable Events")
-                for event in data['notable_events']:
-                    st.warning(f"📌 {event}")
-
-        else:  # Month view
-            st.markdown(f"### {lookup['month']} {lookup['year']} Overview")
-            data = lookup["data"]
-
-            # Monthly summary
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Rainfall", f"{data['total_rainfall_mm']:.1f} mm")
-            with col2:
-                st.metric("Rainy Days", data['rainy_days'])
-            with col3:
-                st.metric("High Risk Days", data['high_risk_days'])
-            with col4:
-                st.metric("Max Daily", f"{data['max_daily_mm']:.1f} mm")
-
-            # Month chart
-            st.markdown("#### Daily Rainfall Pattern")
-            df = pd.DataFrame(data['daily_series'])
-            df['date'] = pd.to_datetime(df['date'])
-            st.bar_chart(df.set_index('date')['rainfall_mm'])
-
-            # Risk distribution
-            st.markdown("#### Risk Distribution")
-            risk_df = pd.DataFrame({
-                'Risk Level': ['High', 'Moderate', 'Low', 'Minimal'],
-                'Days': [data['high_risk_days'], data['moderate_risk_days'],
-                        data['low_risk_days'], data['minimal_risk_days']]
-            })
-            st.bar_chart(risk_df.set_index('Risk Level'))
-
-            # Monthly analysis
-            st.markdown("#### Monthly Analysis")
-            st.info(data['analysis'])
-
-            # Data table
-            st.markdown("#### Daily Data")
-            st.dataframe(pd.DataFrame(data['daily_series']), use_container_width=True)
-
-    # Session history
-    st.divider()
-    st.markdown("### Session Scan History")
-    if st.session_state.scan_history:
-        st.dataframe(pd.DataFrame(st.session_state.scan_history), use_container_width=True)
-    else:
-        st.info("No scans recorded yet")
-
-
-def get_historical_date_data(year: int, month: int, day: int) -> dict:
-    """Get REAL historical data for a specific date from Open-Meteo."""
-    target_date = datetime(year, month, day)
-    lat, lon = 13.0827, 80.2707  # Chennai
-
-    # Determine season
-    if month in [10, 11, 12]:
-        season = "Northeast Monsoon (Peak Season)"
-    elif month in [6, 7, 8, 9]:
-        season = "Southwest Monsoon"
-    else:
-        season = "Dry Season"
-
-    # Fetch REAL data from Open-Meteo Archive API
-    rainfall = 0.0
-    try:
-        date_str = f"{year}-{month:02d}-{day:02d}"
-        archive_url = "https://archive-api.open-meteo.com/v1/archive"
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "start_date": date_str,
-            "end_date": date_str,
-            "daily": "precipitation_sum",
-            "timezone": "Asia/Kolkata",
-        }
-        resp = requests.get(archive_url, params=params, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            precip = data.get("daily", {}).get("precipitation_sum", [0])
-            rainfall = precip[0] if precip and precip[0] is not None else 0.0
-    except Exception:
-        rainfall = 0.0  # API unavailable
-
-    rainfall = round(rainfall, 1)
-
-    # Estimate flood depth from rainfall
-    if rainfall < 30:
-        flood_depth = 0.0
-    elif rainfall < 50:
-        flood_depth = 0.1
-    elif rainfall < 80:
-        flood_depth = 0.25
-    elif rainfall < 120:
-        flood_depth = 0.4
-    else:
-        flood_depth = 0.6 + (rainfall - 120) / 200
-
-    if rainfall > 150:
-        risk = "severe"
-        alert = "RED"
-    elif rainfall > 80:
-        risk = "high"
-        alert = "ORANGE"
-    elif rainfall > 30:
-        risk = "moderate"
-        alert = "YELLOW"
-    elif rainfall > 10:
-        risk = "low"
-        alert = "GREEN"
-    else:
-        risk = "minimal"
-        alert = "NONE"
-
-    # Generate analysis
-    analysis = f"""
-**Season:** {season}
-
-**Rainfall Assessment:** {"Heavy" if rainfall > 80 else "Moderate" if rainfall > 30 else "Light" if rainfall > 5 else "No significant"} rainfall recorded.
-
-**Flood Risk:** {risk.title()} risk conditions. {"Emergency protocols would be activated." if risk in ["severe", "high"] else "Normal monitoring advised."}
-
-**Infrastructure Impact:** {"Major disruptions to power substations and transport likely." if risk == "severe" else "Possible localized flooding in low-lying areas." if risk in ["high", "moderate"] else "Minimal impact expected."}
-"""
-
-    # Notable events
-    notable_events = []
-    if year == 2015 and month == 12 and day <= 5:
-        notable_events.append("2015 Chennai Floods - One of the worst floods in 100 years. 500+ deaths, 18 lakh people displaced.")
-    if year == 2021 and month == 11 and 6 <= day <= 12:
-        notable_events.append("2021 Chennai Floods - Heavy rains caused widespread flooding. Airport runway submerged.")
-    if year == 2023 and month == 11 and 10 <= day <= 15:
-        notable_events.append("Cyclone Michaung - Record 40cm rainfall in 24 hours. City paralyzed for 3 days.")
-
-    return {
-        "date": target_date.strftime("%Y-%m-%d"),
-        "rainfall_mm": rainfall,
-        "risk_level": risk,
-        "flood_depth_m": round(flood_depth, 2),
-        "alert_level": alert,
-        "season": season,
-        "analysis": analysis,
-        "notable_events": notable_events
-    }
-
-
-def get_historical_month_data(year: int, month: int) -> dict:
-    """Get historical data for entire month."""
-    import calendar
-    days_in_month = calendar.monthrange(year, month)[1]
-
-    daily_series = []
-    total_rainfall = 0
-    rainy_days = 0
-    high_risk = 0
-    moderate_risk = 0
-    low_risk = 0
-    minimal_risk = 0
-    max_daily = 0
-
-    for day in range(1, days_in_month + 1):
-        day_data = get_historical_date_data(year, month, day)
-        daily_series.append({
-            "date": f"{year}-{month:02d}-{day:02d}",
-            "rainfall_mm": day_data["rainfall_mm"],
-            "risk_level": day_data["risk_level"]
-        })
-
-        total_rainfall += day_data["rainfall_mm"]
-        max_daily = max(max_daily, day_data["rainfall_mm"])
-
-        if day_data["rainfall_mm"] > 0.1:
-            rainy_days += 1
-
-        if day_data["risk_level"] in ["severe", "high"]:
-            high_risk += 1
-        elif day_data["risk_level"] == "moderate":
-            moderate_risk += 1
-        elif day_data["risk_level"] == "low":
-            low_risk += 1
-        else:
-            minimal_risk += 1
-
-    # Month analysis
-    month_names = ["", "January", "February", "March", "April", "May", "June",
-                   "July", "August", "September", "October", "November", "December"]
-
-    if month in [10, 11, 12]:
-        season_desc = "Northeast Monsoon season - Chennai's primary rainy season"
-    elif month in [6, 7, 8, 9]:
-        season_desc = "Southwest Monsoon - moderate rainfall expected"
-    else:
-        season_desc = "Dry season - minimal rainfall expected"
-
-    analysis = f"""
-**{month_names[month]} {year} Summary**
-
-**Season:** {season_desc}
-
-**Rainfall Pattern:** Total {total_rainfall:.1f}mm across {rainy_days} rainy days. {"Above normal" if total_rainfall > 200 else "Normal" if total_rainfall > 50 else "Below normal"} for this period.
-
-**Risk Assessment:** {high_risk} high-risk days requiring emergency response. {"Critical month for flood preparedness." if high_risk > 5 else "Standard monitoring sufficient."}
-
-**Recommendation:** {"Activate flood response protocols" if high_risk > 10 else "Enhanced monitoring during rain events" if high_risk > 3 else "Routine monitoring"}
-"""
-
-    return {
-        "total_rainfall_mm": round(total_rainfall, 1),
-        "rainy_days": rainy_days,
-        "high_risk_days": high_risk,
-        "moderate_risk_days": moderate_risk,
-        "low_risk_days": low_risk,
-        "minimal_risk_days": minimal_risk,
-        "max_daily_mm": round(max_daily, 1),
-        "daily_series": daily_series,
-        "analysis": analysis
-    }
-
-
-# ============ DROUGHT MODE TAB ============
-
-def render_drought_tab():
-    """Drought mode with water budget and scenarios."""
-    st.subheader("🌾 Drought Mode - Water Budget Analysis")
-
-    if not DROUGHT_ENGINE_AVAILABLE:
-        st.error("Drought engine not available. Please check installation.")
-        return
-
-    st.markdown("Analyze drought conditions using historical scenarios or custom inputs")
-
-    # Scenario selector
-    st.markdown("### Select Scenario")
-    scenario_options = {
-        "2019_drought": "🔴 2019 Chennai Water Crisis",
-        "2021_flood": "🔵 2021 Chennai Floods",
-        "2023_cyclone": "🌀 Cyclone Michaung 2023",
-        "normal_monsoon": "🟢 Normal Monsoon Year",
-        "pre_monsoon_stress": "🟡 Pre-Monsoon Water Stress",
-        "custom": "⚙️ Custom Input"
-    }
-
-    selected_scenario = st.selectbox(
-        "Choose a scenario to analyze",
-        options=list(scenario_options.keys()),
-        format_func=lambda x: scenario_options[x]
-    )
-
-    if selected_scenario != "custom":
-        scenario = SCENARIOS[selected_scenario]
-        conditions = scenario["conditions"]
-
-        st.info(f"**{scenario['name']}** - {scenario['description']}")
-
-        # Display scenario conditions
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Rainfall", f"{conditions['rainfall_mm']} mm/day")
-            st.metric("Reservoir", f"{conditions['reservoir_pct']}%")
-        with col2:
-            st.metric("Groundwater", f"{conditions['groundwater_m']} m depth")
-            st.metric("SPI", f"{conditions['spi']:.1f}")
-        with col3:
-            st.metric("NDVI", f"{conditions['ndvi']:.2f}")
-            st.metric("Soil Moisture", f"{conditions['soil_moisture_pct']}%")
-    else:
-        # Custom inputs
-        st.markdown("#### Custom Conditions")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            custom_rainfall = st.slider("Daily Rainfall (mm)", 0, 400, 20)
-            custom_reservoir = st.slider("Reservoir Level (%)", 0, 100, 50)
-        with col2:
-            custom_gw = st.slider("Groundwater Depth (m)", 0, 30, 10)
-            custom_spi = st.slider("SPI", -3.0, 3.0, 0.0, 0.1)
-        with col3:
-            custom_ndvi = st.slider("NDVI", 0.0, 1.0, 0.5, 0.01)
-            custom_soil = st.slider("Soil Moisture (%)", 0, 100, 40)
-
-        conditions = {
-            "rainfall_mm": custom_rainfall,
-            "reservoir_pct": custom_reservoir,
-            "groundwater_m": custom_gw,
-            "spi": custom_spi,
-            "ndvi": custom_ndvi,
-            "soil_moisture_pct": custom_soil
-        }
-
-    st.divider()
-
-    # Run assessment
-    if st.button("🔍 Analyze Conditions", type="primary"):
-        with st.spinner("Analyzing water budget and drought conditions..."):
-            # Drought assessment
-            assessment = assess_drought(
-                spi=conditions["spi"],
-                soil_moisture=conditions["soil_moisture_pct"],
-                reservoir_pct=conditions["reservoir_pct"],
-                ndvi=conditions["ndvi"],
-                current_month=datetime.now().month
-            )
-
-            # Water budget
-            budget = calculate_water_budget(
-                area_ha=50000,  # Chennai metro agricultural area
-                rainfall_mm=conditions["rainfall_mm"],
-                et_mm=5.0,  # Average ET
-                reservoir_pct=conditions["reservoir_pct"],
-                crop_area_ha=30000,
-                crop_water_need_mm=800
-            )
-
-            st.session_state.drought_assessment = assessment
-            st.session_state.water_budget = budget
-
-    # Display results
-    if hasattr(st.session_state, 'drought_assessment'):
-        assessment = st.session_state.drought_assessment
-        budget = st.session_state.water_budget
-
-        st.markdown("### Drought Assessment")
-
-        # Severity indicator
-        severity_colors = {
-            "none": "🟢", "mild": "🟡", "moderate": "🟠",
-            "severe": "🔴", "extreme": "⚫"
-        }
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Severity", f"{severity_colors.get(assessment.severity, '❓')} {assessment.severity.upper()}")
-        with col2:
-            st.metric("Drought Type", assessment.drought_type.title())
-        with col3:
-            st.metric("Weeks to Impact", assessment.weeks_to_impact)
-        with col4:
-            st.metric("Crop Stress", assessment.crop_stress_level.title())
-
-        # Affected area
-        st.progress(assessment.affected_area_pct / 100, text=f"Affected Area: {assessment.affected_area_pct}%")
-
-        # Water Budget
-        st.markdown("### Water Budget (MCM)")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Supply Side**")
-            st.metric("Total Supply", f"{budget.total_supply_mcm} MCM")
-            st.caption(f"• Rainfall: {budget.rainfall_contribution_mcm} MCM")
-            st.caption(f"• Reservoir: {budget.reservoir_storage_mcm} MCM")
-            st.caption(f"• Groundwater: {budget.groundwater_available_mcm} MCM")
-
-        with col2:
-            st.markdown("**Demand Side**")
-            st.metric("Total Demand", f"{budget.total_demand_mcm} MCM")
-            st.caption(f"• Irrigation: {budget.irrigation_demand_mcm} MCM")
-            st.caption(f"• Domestic: {budget.domestic_demand_mcm} MCM")
-            st.caption(f"• ET Loss: {budget.et_loss_mcm} MCM")
-
-        # Deficit/Surplus
-        if budget.deficit_mcm > 0:
-            st.error(f"⚠️ Water Deficit: {budget.deficit_mcm} MCM")
-        else:
-            st.success(f"✅ Water Surplus: {budget.surplus_mcm} MCM")
-
-        # Recommendations
-        st.markdown("### Recommended Actions")
-        for action in assessment.recommended_actions:
-            st.markdown(f"• {action}")
-
-    # Satellite Observations
-    st.divider()
-    st.markdown("### 🛰️ Satellite-Derived Observations")
-
-    if st.button("Load Satellite Data (Last 30 Days)", key="sat_drought"):
-        with st.spinner("Loading satellite observations..."):
-            sat_obs = generate_satellite_observations(datetime.now(), 30)
-            st.session_state.sat_observations = sat_obs
-
-    if hasattr(st.session_state, 'sat_observations'):
-        obs = st.session_state.sat_observations
-
-        # Display as table
-        sat_df = pd.DataFrame([{
-            'Date': o.date,
-            'Source': o.source,
-            'NDVI': o.ndvi,
-            'NDWI': o.ndwi,
-            'LST (°C)': o.lst_celsius,
-            'Soil Moisture (%)': o.soil_moisture_pct,
-            'ET (mm/day)': o.evapotranspiration_mm,
-            'Cloud (%)': o.cloud_cover_pct
-        } for o in obs])
-
-        st.dataframe(sat_df, use_container_width=True)
-
-        # Chart for key indices
-        st.markdown("#### Vegetation and Water Indices")
-        chart_df = sat_df[['Date', 'NDVI', 'NDWI']].set_index('Date')
-        st.line_chart(chart_df)
-
-        # Download satellite data
-        st.download_button(
-            "📥 Download Satellite Data (CSV)",
-            data=sat_df.to_csv(index=False),
-            file_name="satellite_observations.csv",
-            mime="text/csv"
-        )
-
-    # 5-Year data visualization
-    st.divider()
-    st.markdown("### 📊 5-Year Historical Data")
-
-    if st.button("Generate 5-Year Dataset"):
-        with st.spinner("Generating synthetic historical data..."):
-            df = generate_5year_data(2019)
-            st.session_state.five_year_data = df
-
-    if hasattr(st.session_state, 'five_year_data'):
-        df = st.session_state.five_year_data
-
-        variable = st.selectbox(
-            "Select Variable to Plot",
-            options=["rainfall_mm", "reservoir_pct", "soil_moisture_pct", "spi", "ndvi", "groundwater_m"],
-            format_func=lambda x: {
-                "rainfall_mm": "Daily Rainfall (mm)",
-                "reservoir_pct": "Reservoir Level (%)",
-                "soil_moisture_pct": "Soil Moisture (%)",
-                "spi": "SPI (Drought Index)",
-                "ndvi": "NDVI (Vegetation)",
-                "groundwater_m": "Groundwater Depth (m)"
-            }[x]
-        )
-
-        # Monthly aggregation for clarity
-        df['month'] = df['date'].dt.to_period('M')
-        monthly = df.groupby('month')[variable].mean().reset_index()
-        monthly['month'] = monthly['month'].dt.to_timestamp()
-
-        st.line_chart(monthly.set_index('month')[variable])
-
-        # Download
-        st.download_button(
-            "📥 Download 5-Year Data (CSV)",
-            data=df.to_csv(index=False),
-            file_name="chennai_5year_hydro_data.csv",
-            mime="text/csv"
-        )
-
-
-# ============ FARMER VIEW TAB ============
-
-def render_farmer_tab():
-    """Neutral crop water status and projections for farmers."""
-    st.subheader("👨‍🌾 Crop Water Status Report")
-
-    if not DROUGHT_ENGINE_AVAILABLE:
-        st.error("Projection engine not available. Please check installation.")
-        return
-
-    st.markdown("*View your crop water status and future projections*")
-
-    # Farm inputs
-    st.markdown("### Farm Details")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        farm_area = st.number_input("Farm Area (hectares)", min_value=0.5, max_value=100.0, value=2.0, step=0.5)
-        current_crop = st.selectbox(
-            "Current Crop",
-            options=["paddy", "sugarcane", "cotton", "groundnut", "millets", "pulses"]
-        )
-
-    with col2:
-        crop_stage = st.slider("Days Since Sowing", 0, 180, 45)
-        water_available = st.number_input("Water Available (mm)", min_value=0, max_value=2000, value=500)
-
-    daily_et = st.slider("Daily Water Use (ET mm/day)", 2.0, 10.0, 5.0, 0.5)
-
-    st.divider()
-
-    # Generate status report
-    if st.button("📊 Generate Status Report", type="primary", use_container_width=True):
-        with st.spinner("Calculating crop water status..."):
-            status = calculate_crop_status(
-                crop=current_crop,
-                area_ha=farm_area,
-                days_since_sowing=crop_stage,
-                water_available_mm=water_available,
-                daily_et_mm=daily_et
-            )
-            st.session_state.crop_status = status
-
-            # Also generate projections if we have drought data
-            if hasattr(st.session_state, 'drought_assessment'):
-                spi = st.session_state.drought_assessment.spi_value
-            else:
-                spi = 0
-            projections = generate_projections(
-                current_rainfall_mm=5.0,
-                current_reservoir_pct=50,
-                current_soil_moisture=40,
-                spi=spi,
-                weeks_ahead=8
-            )
-            st.session_state.water_projections = projections
-
-    # Display status
-    if hasattr(st.session_state, 'crop_status'):
-        status = st.session_state.crop_status
-
-        st.markdown("### Current Crop Status")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Crop", status.crop.title())
-            st.metric("Growth Stage", status.stage)
-        with col2:
-            st.metric("Days Remaining", f"{status.days_remaining} days")
-            st.metric("Water Required", f"{status.water_required_mm} mm")
-        with col3:
-            st.metric("Water Available", f"{status.water_available_mm} mm")
-            st.metric("Deficit", f"{status.deficit_mm} mm", delta=f"-{status.deficit_pct:.0f}%" if status.deficit_mm > 0 else None)
-
-        # Critical date
-        st.markdown("### Key Projection")
-        if status.deficit_mm > 0:
-            st.warning(f"⚠️ **Water Deficit:** {status.deficit_mm} mm ({status.deficit_pct:.0f}% of remaining need)")
-        else:
-            st.success(f"✅ **Water Sufficient:** {status.water_available_mm - status.water_required_mm:.0f} mm surplus")
-
-        st.info(f"📅 **Critical Date:** At current usage rate ({daily_et} mm/day), available water may last until **{status.critical_date}**")
-
-        # Water projections
-        if hasattr(st.session_state, 'water_projections'):
-            st.markdown("### 8-Week Water Projections")
-
-            projections = st.session_state.water_projections
-            proj_df = pd.DataFrame([{
-                'Week': p.weeks_ahead,
-                'Rainfall (mm)': p.projected_rainfall_mm,
-                'Reservoir (%)': p.projected_reservoir_pct,
-                'Soil Moisture (%)': p.projected_soil_moisture_pct,
-                'Streamflow (% normal)': p.projected_streamflow_pct,
-                'Cumulative Deficit (mm)': p.cumulative_deficit_mm,
-                'Trend': p.trend
-            } for p in projections])
-
-            st.dataframe(proj_df, use_container_width=True)
-
-            # Chart
-            st.markdown("#### Projected Water Availability")
-            chart_df = proj_df[['Week', 'Reservoir (%)', 'Soil Moisture (%)']].set_index('Week')
-            st.line_chart(chart_df)
-
-            # Find critical week
-            for p in projections:
-                if p.projected_reservoir_pct < 20 or p.cumulative_deficit_mm > 100:
-                    st.warning(f"⚠️ **Projection:** Reservoir may fall below 20% by week {p.weeks_ahead}")
-                    break
-            else:
-                st.success("✅ **Projection:** Water availability stable for next 8 weeks")
-
-        # Download report
-        st.divider()
-        report = f"""# Crop Water Status Report
-## {current_crop.title()} - {farm_area} hectares
-
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
-
----
-
-### Current Status
-- **Growth Stage:** {status.stage}
-- **Days Remaining:** {status.days_remaining}
-- **Water Required:** {status.water_required_mm} mm
-- **Water Available:** {status.water_available_mm} mm
-- **Deficit:** {status.deficit_mm} mm ({status.deficit_pct:.0f}%)
-
-### Critical Date
-At current usage rate ({daily_et} mm/day), water may last until: **{status.critical_date}**
-
----
-*This report presents data projections only. Decisions rest with the farmer.*
-"""
-
-        st.download_button(
-            "📥 Download Report",
-            data=report,
-            file_name=f"crop_status_{current_crop}_{datetime.now().strftime('%Y%m%d')}.md",
-            mime="text/markdown"
-        )
-
-
-# ============ ADMIN VIEW TAB ============
-
-def render_admin_tab():
-    """Neutral regional water status report for administrators."""
-    st.subheader("🏛️ Regional Water Status Report")
-
-    if not DROUGHT_ENGINE_AVAILABLE:
-        st.error("Projection engine not available. Please check installation.")
-        return
-
-    st.markdown("*View regional water supply status and projections*")
-
-    # Region selector
-    st.markdown("### Region Configuration")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        region = st.selectbox(
-            "Select District",
-            options=["Chennai Metro", "Kanchipuram", "Thiruvallur", "Chengalpattu"]
-        )
-
-        # Pre-set areas for different districts
-        region_areas = {
-            "Chennai Metro": 50000,
-            "Kanchipuram": 80000,
-            "Thiruvallur": 70000,
-            "Chengalpattu": 60000
-        }
-        total_area = region_areas.get(region, 50000)
-        st.caption(f"Total Cultivated Area: {total_area:,} hectares")
-
-    with col2:
-        reservoir_pct = st.slider("Current Reservoir Level (%)", 0, 100, 45)
-        groundwater_m = st.slider("Groundwater Depth (m below surface)", 0, 30, 12)
-
-    weekly_demand = st.number_input("Weekly Water Demand (MCM)", min_value=1.0, max_value=100.0, value=25.0, step=5.0)
-
-    st.divider()
-
-    # Generate report
-    if st.button("📊 Generate Status Report", type="primary", use_container_width=True):
-        with st.spinner("Generating regional water status..."):
-            report = generate_regional_report(
-                region=region,
-                total_area_ha=total_area,
-                reservoir_pct=reservoir_pct,
-                groundwater_m=groundwater_m,
-                current_demand_mcm_per_week=weekly_demand
-            )
-            st.session_state.regional_report = report
-
-            # Generate projections
-            if hasattr(st.session_state, 'drought_assessment'):
-                spi = st.session_state.drought_assessment.spi_value
-            else:
-                # Estimate SPI from reservoir level
-                if reservoir_pct < 20:
-                    spi = -2.0
-                elif reservoir_pct < 40:
-                    spi = -1.0
-                elif reservoir_pct < 60:
-                    spi = 0.0
-                else:
-                    spi = 0.5
-
-            projections = generate_projections(
-                current_rainfall_mm=5.0,
-                current_reservoir_pct=reservoir_pct,
-                current_soil_moisture=40,
-                spi=spi,
-                weeks_ahead=12
-            )
-            st.session_state.admin_projections = projections
-
-    # Display report
-    if hasattr(st.session_state, 'regional_report'):
-        rpt = st.session_state.regional_report
-
-        st.markdown(f"### {rpt.region} - Current Status")
-
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Reservoir Storage", f"{rpt.reservoir_storage_mcm:.0f} MCM",
-                      delta=f"{rpt.reservoir_pct:.0f}% of capacity")
-        with col2:
-            st.metric("Groundwater Level", f"{rpt.groundwater_level_m} m",
-                      delta="below surface")
-        with col3:
-            st.metric("Streamflow", f"{rpt.streamflow_pct_normal:.0f}%",
-                      delta="of normal")
-        with col4:
-            st.metric("Weeks of Supply", f"{rpt.weeks_of_supply} weeks",
-                      delta="at current demand")
-
-        # Area breakdown
-        st.markdown("### Land Use")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Agricultural", f"{rpt.total_area_ha:,.0f} ha")
-        with col2:
-            st.metric("Irrigated Area", f"{rpt.irrigated_area_ha:,.0f} ha")
-        with col3:
-            st.metric("Rainfed Area", f"{rpt.rainfed_area_ha:,.0f} ha")
-
-        # Key projections
-        st.markdown("### Key Projections")
-
-        if rpt.deficit_mcm > 0:
-            st.warning(f"⚠️ **Projected Seasonal Deficit:** {rpt.deficit_mcm:.1f} MCM")
-        else:
-            st.success(f"✅ **Projected Seasonal Surplus:** {abs(rpt.deficit_mcm):.1f} MCM")
-
-        st.info(f"📅 **Projected Depletion Date:** At current demand ({weekly_demand} MCM/week), reservoir storage may deplete by **{rpt.projected_depletion_date}**")
-
-        # Projections table
-        if hasattr(st.session_state, 'admin_projections'):
-            st.markdown("### 12-Week Projections")
-
-            projections = st.session_state.admin_projections
-            proj_df = pd.DataFrame([{
-                'Week': p.weeks_ahead,
-                'Reservoir (%)': p.projected_reservoir_pct,
-                'Soil Moisture (%)': p.projected_soil_moisture_pct,
-                'Streamflow (% normal)': p.projected_streamflow_pct,
-                'Cumulative Deficit (mm)': p.cumulative_deficit_mm,
-                'Trend': p.trend
-            } for p in projections])
-
-            st.dataframe(proj_df, use_container_width=True)
-
-            # Chart
-            st.markdown("#### Projected Reservoir and Streamflow")
-            chart_df = proj_df[['Week', 'Reservoir (%)', 'Streamflow (% normal)']].set_index('Week')
-            st.line_chart(chart_df)
-
-            # Find critical thresholds
-            st.markdown("### Critical Thresholds")
-
-            critical_week = None
-            for p in projections:
-                if p.projected_reservoir_pct < 15:
-                    critical_week = p.weeks_ahead
-                    break
-
-            if critical_week:
-                st.warning(f"⚠️ **Projection:** Reservoir may fall below 15% by week {critical_week}")
-            else:
-                st.success("✅ **Projection:** Reservoir level above 15% for next 12 weeks")
-
-            streamflow_week = None
-            for p in projections:
-                if p.projected_streamflow_pct < 50:
-                    streamflow_week = p.weeks_ahead
-                    break
-
-            if streamflow_week:
-                st.warning(f"⚠️ **Projection:** Streamflow may fall below 50% of normal by week {streamflow_week}")
-
-        # Download report
-        st.divider()
-        report_text = f"""# Regional Water Status Report
-## {rpt.region}
-
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
-
----
-
-### Current Status
-- **Reservoir Storage:** {rpt.reservoir_storage_mcm:.0f} MCM ({rpt.reservoir_pct:.0f}% of {rpt.reservoir_capacity_mcm:.0f} MCM capacity)
-- **Groundwater Level:** {rpt.groundwater_level_m} m below surface
-- **Streamflow:** {rpt.streamflow_pct_normal:.0f}% of normal
-
-### Land Use
-- **Total Agricultural Area:** {rpt.total_area_ha:,.0f} hectares
-- **Irrigated Area:** {rpt.irrigated_area_ha:,.0f} hectares
-- **Rainfed Area:** {rpt.rainfed_area_ha:,.0f} hectares
-
-### Projections
-- **Weeks of Supply:** {rpt.weeks_of_supply} weeks at current demand
-- **Projected Seasonal Deficit:** {rpt.deficit_mcm:.1f} MCM
-- **Projected Depletion Date:** {rpt.projected_depletion_date}
-
----
-*This report presents data projections only. Policy decisions rest with the administration.*
-"""
-
-        st.download_button(
-            "📥 Download Status Report",
-            data=report_text,
-            file_name=f"regional_water_status_{region.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.md",
-            mime="text/markdown"
-        )
 
 
 if __name__ == "__main__":
