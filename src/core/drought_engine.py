@@ -316,119 +316,304 @@ def assess_drought(
     )
 
 
-# ============ FARMER DECISION SUPPORT ============
+# ============ SATELLITE DATA INTEGRATION ============
 
 @dataclass
-class FarmerDecision:
-    """Decision option for a farmer."""
-    option_id: str
-    title: str
-    description: str
-    investment_required: float
-    expected_return: float
-    risk_level: str
-    water_required_mm: float
-    probability_success: float
+class SatelliteObservation:
+    """Satellite-derived observation."""
+    date: str
+    source: str  # Sentinel-2, MODIS, Landsat, etc.
+    ndvi: float
+    ndwi: float  # Normalized Difference Water Index
+    lst_celsius: float  # Land Surface Temperature
+    soil_moisture_pct: float
+    evapotranspiration_mm: float
+    cloud_cover_pct: float
 
 
-def generate_farmer_options(
-    current_crop: str,
-    crop_stage_days: int,
-    water_available_mm: float,
-    drought_severity: str,
+def generate_satellite_observations(start_date: datetime, days: int = 30) -> List[SatelliteObservation]:
+    """Generate realistic satellite observations for Chennai region."""
+    observations = []
+
+    for i in range(0, days, 5):  # Satellite revisit ~5 days
+        obs_date = start_date - timedelta(days=days-i)
+        month = obs_date.month
+
+        # Seasonal patterns
+        if month in [10, 11, 12]:  # Monsoon
+            ndvi = np.random.uniform(0.45, 0.75)
+            ndwi = np.random.uniform(0.1, 0.4)
+            lst = np.random.uniform(26, 32)
+            soil_m = np.random.uniform(50, 85)
+            et = np.random.uniform(3.0, 5.0)
+            cloud = np.random.uniform(30, 80)
+        elif month in [4, 5, 6]:  # Hot dry
+            ndvi = np.random.uniform(0.15, 0.35)
+            ndwi = np.random.uniform(-0.2, 0.05)
+            lst = np.random.uniform(38, 48)
+            soil_m = np.random.uniform(10, 30)
+            et = np.random.uniform(5.5, 7.5)
+            cloud = np.random.uniform(5, 25)
+        else:
+            ndvi = np.random.uniform(0.30, 0.50)
+            ndwi = np.random.uniform(-0.05, 0.15)
+            lst = np.random.uniform(30, 38)
+            soil_m = np.random.uniform(25, 50)
+            et = np.random.uniform(4.0, 6.0)
+            cloud = np.random.uniform(10, 40)
+
+        observations.append(SatelliteObservation(
+            date=obs_date.strftime("%Y-%m-%d"),
+            source=np.random.choice(["Sentinel-2", "MODIS", "Landsat-8"]),
+            ndvi=round(ndvi, 3),
+            ndwi=round(ndwi, 3),
+            lst_celsius=round(lst, 1),
+            soil_moisture_pct=round(soil_m, 1),
+            evapotranspiration_mm=round(et, 2),
+            cloud_cover_pct=round(cloud, 1)
+        ))
+
+    return observations
+
+
+# ============ PROJECTION ENGINE (NEUTRAL) ============
+
+@dataclass
+class WaterProjection:
+    """Neutral water availability projection."""
+    weeks_ahead: int
+    projected_rainfall_mm: float
+    projected_reservoir_pct: float
+    projected_soil_moisture_pct: float
+    projected_streamflow_pct: float  # % of normal
+    cumulative_deficit_mm: float
+    trend: str  # improving, stable, declining
+
+
+def generate_projections(
+    current_rainfall_mm: float,
+    current_reservoir_pct: float,
+    current_soil_moisture: float,
+    spi: float,
+    weeks_ahead: int = 8
+) -> List[WaterProjection]:
+    """Generate neutral water projections without recommendations."""
+
+    projections = []
+
+    # Current state
+    rainfall = current_rainfall_mm
+    reservoir = current_reservoir_pct
+    soil_m = current_soil_moisture
+    cumulative_deficit = 0
+
+    # Depletion/recovery rates based on SPI
+    if spi < -1.5:  # Severe drought
+        weekly_reservoir_change = -3.5
+        weekly_soil_change = -4.0
+        rainfall_factor = 0.3
+    elif spi < -1.0:
+        weekly_reservoir_change = -2.0
+        weekly_soil_change = -2.5
+        rainfall_factor = 0.5
+    elif spi < -0.5:
+        weekly_reservoir_change = -1.0
+        weekly_soil_change = -1.5
+        rainfall_factor = 0.7
+    elif spi > 0.5:  # Wet conditions
+        weekly_reservoir_change = 2.0
+        weekly_soil_change = 2.5
+        rainfall_factor = 1.3
+    else:
+        weekly_reservoir_change = -0.5
+        weekly_soil_change = -0.5
+        rainfall_factor = 1.0
+
+    for week in range(1, weeks_ahead + 1):
+        # Project values
+        reservoir = max(0, min(100, reservoir + weekly_reservoir_change))
+        soil_m = max(0, min(100, soil_m + weekly_soil_change))
+        projected_rain = max(0, rainfall * rainfall_factor * (0.8 + np.random.uniform(-0.2, 0.2)))
+
+        # Streamflow as function of reservoir and soil moisture
+        streamflow_pct = (reservoir * 0.6 + soil_m * 0.4) / 50 * 100  # % of normal
+
+        # Calculate deficit
+        normal_weekly_need = 25  # mm typical weekly crop water need
+        weekly_deficit = max(0, normal_weekly_need - projected_rain)
+        cumulative_deficit += weekly_deficit
+
+        # Determine trend
+        if weekly_reservoir_change > 0:
+            trend = "improving"
+        elif weekly_reservoir_change > -1:
+            trend = "stable"
+        else:
+            trend = "declining"
+
+        projections.append(WaterProjection(
+            weeks_ahead=week,
+            projected_rainfall_mm=round(projected_rain, 1),
+            projected_reservoir_pct=round(reservoir, 1),
+            projected_soil_moisture_pct=round(soil_m, 1),
+            projected_streamflow_pct=round(streamflow_pct, 1),
+            cumulative_deficit_mm=round(cumulative_deficit, 1),
+            trend=trend
+        ))
+
+    return projections
+
+
+@dataclass
+class CropWaterStatus:
+    """Neutral crop water status report."""
+    crop: str
     area_ha: float
-) -> List[FarmerDecision]:
-    """Generate decision options for a farmer based on conditions."""
+    stage: str
+    days_remaining: int
+    water_required_mm: float
+    water_available_mm: float
+    deficit_mm: float
+    deficit_pct: float
+    critical_date: str  # When water may run out
 
-    options = []
 
-    # Crop water requirements (mm for full season)
-    crop_water = {
-        'paddy': 1200,
-        'sugarcane': 1800,
-        'cotton': 700,
-        'groundnut': 500,
-        'millets': 350,
-        'pulses': 300
+def calculate_crop_status(
+    crop: str,
+    area_ha: float,
+    days_since_sowing: int,
+    water_available_mm: float,
+    daily_et_mm: float = 5.0
+) -> CropWaterStatus:
+    """Calculate neutral crop water status without recommendations."""
+
+    # Crop parameters
+    crop_params = {
+        'paddy': {'total_days': 120, 'total_water': 1200},
+        'sugarcane': {'total_days': 360, 'total_water': 1800},
+        'cotton': {'total_days': 180, 'total_water': 700},
+        'groundnut': {'total_days': 120, 'total_water': 500},
+        'millets': {'total_days': 90, 'total_water': 350},
+        'pulses': {'total_days': 90, 'total_water': 300}
     }
 
-    remaining_water_need = crop_water.get(current_crop, 600) * (1 - crop_stage_days/120)
+    params = crop_params.get(crop, {'total_days': 120, 'total_water': 600})
 
-    if drought_severity in ['severe', 'extreme']:
-        # Option 1: Continue with reduced yield
-        options.append(FarmerDecision(
-            option_id="A",
-            title="Continue with reduced yield",
-            description=f"Continue {current_crop} cultivation with available water",
-            investment_required=15000 * area_ha,
-            expected_return=25000 * area_ha * 0.4,  # 40% yield
-            risk_level="High",
-            water_required_mm=remaining_water_need,
-            probability_success=0.40
-        ))
+    days_remaining = max(0, params['total_days'] - days_since_sowing)
 
-        # Option 2: Stop and claim insurance
-        options.append(FarmerDecision(
-            option_id="B",
-            title="Stop cultivation, claim insurance",
-            description="Declare crop loss and initiate PMFBY claim",
-            investment_required=0,
-            expected_return=25000 * area_ha,  # Insurance payout
-            risk_level="Low",
-            water_required_mm=0,
-            probability_success=0.85
-        ))
+    # Crop stage
+    progress = days_since_sowing / params['total_days']
+    if progress < 0.2:
+        stage = "Germination/Establishment"
+    elif progress < 0.4:
+        stage = "Vegetative Growth"
+    elif progress < 0.7:
+        stage = "Flowering/Reproductive"
+    elif progress < 0.9:
+        stage = "Grain Filling"
+    else:
+        stage = "Maturity"
 
-        # Option 3: Switch to short-duration crop
-        options.append(FarmerDecision(
-            option_id="C",
-            title="Switch to drought-resistant crop",
-            description="Plant millets/pulses (60-75 days)",
-            investment_required=8000 * area_ha,
-            expected_return=18000 * area_ha,
-            risk_level="Medium",
-            water_required_mm=300,
-            probability_success=0.70
-        ))
+    # Remaining water need
+    water_used = params['total_water'] * progress
+    water_required = params['total_water'] - water_used
 
-    elif drought_severity == 'moderate':
-        # Option 1: Continue with supplemental irrigation
-        options.append(FarmerDecision(
-            option_id="A",
-            title="Continue with supplemental irrigation",
-            description="Purchase water/use borewells",
-            investment_required=20000 * area_ha,
-            expected_return=40000 * area_ha * 0.7,
-            risk_level="Medium",
-            water_required_mm=remaining_water_need,
-            probability_success=0.65
-        ))
+    deficit = max(0, water_required - water_available_mm)
+    deficit_pct = (deficit / water_required * 100) if water_required > 0 else 0
 
-        # Option 2: Reduce area
-        options.append(FarmerDecision(
-            option_id="B",
-            title="Reduce cultivated area by 40%",
-            description="Focus water on 60% of field",
-            investment_required=12000 * area_ha * 0.6,
-            expected_return=40000 * area_ha * 0.6 * 0.85,
-            risk_level="Low",
-            water_required_mm=remaining_water_need * 0.6,
-            probability_success=0.80
-        ))
+    # Critical date (when water runs out at current ET rate)
+    if water_available_mm > 0 and daily_et_mm > 0:
+        days_until_critical = water_available_mm / daily_et_mm
+        critical_date = (datetime.now() + timedelta(days=days_until_critical)).strftime("%Y-%m-%d")
+    else:
+        critical_date = datetime.now().strftime("%Y-%m-%d")
 
-    else:  # Mild or none
-        options.append(FarmerDecision(
-            option_id="A",
-            title="Continue normal cultivation",
-            description="No changes needed",
-            investment_required=10000 * area_ha,
-            expected_return=40000 * area_ha,
-            risk_level="Low",
-            water_required_mm=remaining_water_need,
-            probability_success=0.85
-        ))
+    return CropWaterStatus(
+        crop=crop,
+        area_ha=area_ha,
+        stage=stage,
+        days_remaining=days_remaining,
+        water_required_mm=round(water_required, 1),
+        water_available_mm=round(water_available_mm, 1),
+        deficit_mm=round(deficit, 1),
+        deficit_pct=round(deficit_pct, 1),
+        critical_date=critical_date
+    )
 
-    return options
+
+@dataclass
+class RegionalWaterReport:
+    """Neutral regional water status report."""
+    region: str
+    total_area_ha: float
+    irrigated_area_ha: float
+    rainfed_area_ha: float
+    reservoir_storage_mcm: float
+    reservoir_capacity_mcm: float
+    reservoir_pct: float
+    groundwater_level_m: float
+    streamflow_pct_normal: float
+    weeks_of_supply: int
+    deficit_mcm: float
+    projected_depletion_date: str
+
+
+def generate_regional_report(
+    region: str,
+    total_area_ha: float,
+    reservoir_pct: float,
+    groundwater_m: float,
+    current_demand_mcm_per_week: float
+) -> RegionalWaterReport:
+    """Generate neutral regional water report."""
+
+    # Regional parameters
+    reservoir_capacity = 800  # MCM for Chennai region
+    current_storage = reservoir_capacity * (reservoir_pct / 100)
+
+    irrigated_pct = 0.6
+    irrigated_area = total_area_ha * irrigated_pct
+    rainfed_area = total_area_ha * (1 - irrigated_pct)
+
+    # Streamflow based on groundwater level
+    if groundwater_m < 5:
+        streamflow_pct = 120  # Above normal
+    elif groundwater_m < 10:
+        streamflow_pct = 100
+    elif groundwater_m < 15:
+        streamflow_pct = 70
+    elif groundwater_m < 20:
+        streamflow_pct = 40
+    else:
+        streamflow_pct = 15
+
+    # Weeks of supply
+    if current_demand_mcm_per_week > 0:
+        weeks_of_supply = int(current_storage / current_demand_mcm_per_week)
+    else:
+        weeks_of_supply = 52
+
+    # Deficit
+    seasonal_demand = current_demand_mcm_per_week * 16  # 4 months
+    deficit = max(0, seasonal_demand - current_storage)
+
+    # Depletion date
+    depletion_date = (datetime.now() + timedelta(weeks=weeks_of_supply)).strftime("%Y-%m-%d")
+
+    return RegionalWaterReport(
+        region=region,
+        total_area_ha=total_area_ha,
+        irrigated_area_ha=irrigated_area,
+        rainfed_area_ha=rainfed_area,
+        reservoir_storage_mcm=round(current_storage, 1),
+        reservoir_capacity_mcm=reservoir_capacity,
+        reservoir_pct=reservoir_pct,
+        groundwater_level_m=groundwater_m,
+        streamflow_pct_normal=streamflow_pct,
+        weeks_of_supply=weeks_of_supply,
+        deficit_mcm=round(deficit, 1),
+        projected_depletion_date=depletion_date
+    )
 
 
 # ============ ADMINISTRATOR DECISION SUPPORT ============
