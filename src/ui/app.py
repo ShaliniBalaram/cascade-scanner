@@ -635,7 +635,7 @@ python scripts/download_data.py
             "Access": "Via GEE"
         }
     ])
-    st.dataframe(sources_df, width='stretch')
+    st.dataframe(sources_df, use_container_width=True)
 
 
 def fetch_precipitation_data(days_back: int) -> dict:
@@ -891,7 +891,7 @@ def render_download_tab():
                 data=json.dumps(result, indent=2),
                 file_name=f"cascade_scan_{result['event_id']}.json",
                 mime="application/json",
-                width='stretch'
+                use_container_width=True
             )
 
             report = f"""# Cascade Scanner Report
@@ -917,7 +917,7 @@ def render_download_tab():
                 data=report,
                 file_name=f"cascade_report_{result['event_id']}.md",
                 mime="text/markdown",
-                width='stretch'
+                use_container_width=True
             )
         else:
             st.info("Run a scan first to enable downloads")
@@ -933,7 +933,7 @@ def render_download_tab():
                 data=json.dumps(analysis, indent=2, default=str),
                 file_name=f"temporal_analysis.json",
                 mime="application/json",
-                width='stretch'
+                use_container_width=True
             )
 
             df = pd.DataFrame(analysis['series'])
@@ -945,7 +945,7 @@ def render_download_tab():
                 data=csv_buffer.getvalue(),
                 file_name="timeseries.csv",
                 mime="text/csv",
-                width='stretch'
+                use_container_width=True
             )
         else:
             st.info("Run temporal analysis first")
@@ -957,7 +957,7 @@ def render_download_tab():
                 data=json.dumps(st.session_state.scan_history, indent=2),
                 file_name="scan_history.json",
                 mime="application/json",
-                width='stretch'
+                use_container_width=True
             )
 
 
@@ -1075,13 +1075,13 @@ def render_history_tab():
 
             # Data table
             st.markdown("#### Daily Data")
-            st.dataframe(pd.DataFrame(data['daily_series']), width='stretch')
+            st.dataframe(pd.DataFrame(data['daily_series']), use_container_width=True)
 
     # Session history
     st.divider()
     st.markdown("### Session Scan History")
     if st.session_state.scan_history:
-        st.dataframe(pd.DataFrame(st.session_state.scan_history), width='stretch')
+        st.dataframe(pd.DataFrame(st.session_state.scan_history), use_container_width=True)
     else:
         st.info("No scans recorded yet")
 
