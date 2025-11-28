@@ -869,7 +869,7 @@ def render_weather_tab(weather, forecast):
             "Rain Prob (%)": rain_probs,
         })
 
-        st.dataframe(forecast_df, use_container_width=True)
+        st.dataframe(forecast_df)
 
         # Charts
         col1, col2 = st.columns(2)
@@ -991,7 +991,7 @@ def render_data_explorer():
 
     # Raw data
     st.markdown("### Raw Data")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df)
 
     # Download
     col1, col2 = st.columns(2)
@@ -1029,19 +1029,19 @@ def render_ai_assistant(weather, forecast, assets, satellite):
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("🌊 Is there flood risk today?", use_container_width=True):
+        if st.button("🌊 Is there flood risk today?"):
             st.session_state.ai_question = "flood_risk"
-        if st.button("🏥 Which hospitals are at risk?", use_container_width=True):
+        if st.button("🏥 Which hospitals are at risk?"):
             st.session_state.ai_question = "hospital_risk"
-        if st.button("🛰️ What does satellite data show?", use_container_width=True):
+        if st.button("🛰️ What does satellite data show?"):
             st.session_state.ai_question = "satellite"
 
     with col2:
-        if st.button("🏜️ Is there drought risk?", use_container_width=True):
+        if st.button("🏜️ Is there drought risk?"):
             st.session_state.ai_question = "drought"
-        if st.button("⚡ Power infrastructure status?", use_container_width=True):
+        if st.button("⚡ Power infrastructure status?"):
             st.session_state.ai_question = "power"
-        if st.button("🔮 3-day hazard forecast?", use_container_width=True):
+        if st.button("🔮 3-day hazard forecast?"):
             st.session_state.ai_question = "forecast"
 
     # Custom question
