@@ -9,6 +9,13 @@ import numpy as np
 import requests
 import json
 
+# Optional LLM support
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
 st.set_page_config(
     page_title="Chennai Weather Dashboard",
     page_icon="🌤️",
@@ -128,6 +135,48 @@ def weather_code_to_emoji(code):
 
 
 # ============ AI ASSISTANT ============
+
+def get_llm_response(question: str, weather_context: str) -> str:
+    """Get response from Groq LLM (free tier) with weather context."""
+    try:
+        # Check for API key in Streamlit secrets
+        api_key = None
+        if hasattr(st, 'secrets') and 'groq' in st.secrets:
+            api_key = st.secrets['groq'].get('api_key')
+
+        if not api_key or not GROQ_AVAILABLE:
+            return None
+
+        client = Groq(api_key=api_key)
+
+        system_prompt = f"""You are a helpful weather assistant for Chennai, India.
+Answer questions clearly and practically based on the current weather data provided.
+Be concise but informative. Give actionable advice when relevant.
+
+Current Weather Data:
+{weather_context}
+
+Guidelines:
+- Be practical and specific to Chennai
+- Consider local conditions (tropical climate, monsoons, humidity)
+- Give clear yes/no answers when appropriate
+- Include relevant numbers from the data
+- Keep responses under 150 words"""
+
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",  # Fast, free model
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question}
+            ],
+            max_tokens=300,
+            temperature=0.7
+        )
+
+        return response.choices[0].message.content
+    except Exception as e:
+        return None
+
 
 def get_weather_advice(current, forecast, question=""):
     """Generate advice based on weather data."""
@@ -533,6 +582,16 @@ def render_ai_chat():
     st.subheader("💬 Ask About Weather")
     st.markdown("*Ask any question about Chennai weather*")
 
+    # Check if LLM is available
+    has_llm = False
+    if GROQ_AVAILABLE and hasattr(st, 'secrets') and 'groq' in st.secrets:
+        has_llm = st.secrets['groq'].get('api_key') is not None
+
+    if has_llm:
+        st.success("🤖 AI-powered answers enabled (Llama 3.1)")
+    else:
+        st.info("💡 Quick answers available. For AI-powered responses, add Groq API key to secrets.")
+
     # Common questions
     st.markdown("### Quick Questions")
 
@@ -666,22 +725,45 @@ def render_ai_chat():
                 st.markdown(f"{i+2}. {day}: {temp}°C, {rain_p}% rain (Score: {score:.0f})")
 
         elif question == "custom":
-            q_lower = st.session_state.custom_question.lower()
+            user_question = st.session_state.custom_question
 
-            # Simple keyword matching
-            if "rain" in q_lower or "umbrella" in q_lower:
-                st.info(f"**Rain forecast:**\n- Today: {rain_probs[0]}% chance\n- Tomorrow: {rain_probs[1] if len(rain_probs) > 1 else 'N/A'}%\n- Current rain: {rain}mm")
-            elif "temp" in q_lower or "hot" in q_lower or "cold" in q_lower:
-                st.info(f"**Temperature:**\n- Now: {temp}°C\n- Today's max: {max_temps[0]}°C\n- Week range: {min(max_temps)}-{max(max_temps)}°C")
-            elif "humid" in q_lower:
-                st.info(f"**Humidity:** Currently {humidity}%\n\n{'Very humid!' if humidity > 80 else 'Comfortable' if humidity < 60 else 'Moderately humid'}")
-            elif "wind" in q_lower:
-                st.info(f"**Wind:** Currently {wind} km/h\n\n{'Windy!' if wind > 20 else 'Light breeze' if wind > 5 else 'Calm'}")
-            elif "tomorrow" in q_lower:
-                if len(dates) > 1:
-                    st.info(f"**Tomorrow's forecast:**\n- Max temp: {max_temps[1]}°C\n- Rain chance: {rain_probs[1]}%\n- Expected rain: {rain_sums[1]}mm")
+            # Build weather context for LLM
+            weather_context = f"""
+Current Conditions (Chennai):
+- Temperature: {temp}°C
+- Humidity: {humidity}%
+- Current rain: {rain}mm
+- Wind: {wind} km/h
+
+7-Day Forecast:
+"""
+            for i in range(min(7, len(dates))):
+                day = datetime.strptime(dates[i], "%Y-%m-%d").strftime("%A")
+                weather_context += f"- {day}: {max_temps[i]}°C, {rain_probs[i]}% rain chance, {rain_sums[i]}mm expected\n"
+
+            # Try LLM first
+            with st.spinner("Thinking..."):
+                llm_response = get_llm_response(user_question, weather_context)
+
+            if llm_response:
+                st.markdown(f"🤖 **AI Response:**\n\n{llm_response}")
+                st.caption("*Powered by Llama 3.1 via Groq (free tier)*")
             else:
-                st.info(f"**Current conditions:**\n- Temperature: {temp}°C\n- Humidity: {humidity}%\n- Rain: {rain}mm\n- Wind: {wind} km/h\n\nFor more specific answers, try asking about rain, temperature, humidity, or wind!")
+                # Fallback to keyword matching
+                q_lower = user_question.lower()
+                if "rain" in q_lower or "umbrella" in q_lower:
+                    st.info(f"**Rain forecast:**\n- Today: {rain_probs[0]}% chance\n- Tomorrow: {rain_probs[1] if len(rain_probs) > 1 else 'N/A'}%\n- Current rain: {rain}mm")
+                elif "temp" in q_lower or "hot" in q_lower or "cold" in q_lower:
+                    st.info(f"**Temperature:**\n- Now: {temp}°C\n- Today's max: {max_temps[0]}°C\n- Week range: {min(max_temps)}-{max(max_temps)}°C")
+                elif "humid" in q_lower:
+                    st.info(f"**Humidity:** Currently {humidity}%\n\n{'Very humid!' if humidity > 80 else 'Comfortable' if humidity < 60 else 'Moderately humid'}")
+                elif "wind" in q_lower:
+                    st.info(f"**Wind:** Currently {wind} km/h\n\n{'Windy!' if wind > 20 else 'Light breeze' if wind > 5 else 'Calm'}")
+                elif "tomorrow" in q_lower:
+                    if len(dates) > 1:
+                        st.info(f"**Tomorrow's forecast:**\n- Max temp: {max_temps[1]}°C\n- Rain chance: {rain_probs[1]}%\n- Expected rain: {rain_sums[1]}mm")
+                else:
+                    st.info(f"**Current conditions:**\n- Temperature: {temp}°C\n- Humidity: {humidity}%\n- Rain: {rain}mm\n- Wind: {wind} km/h\n\n*To enable AI-powered answers, add a Groq API key in Streamlit secrets.*")
 
         # Clear question
         if st.button("Ask another question"):
