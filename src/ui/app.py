@@ -1217,6 +1217,97 @@ Infrastructure:
                     else:
                         st.success(f"**All {len(assets)} monitored assets currently safe**")
 
+                # Travel questions
+                elif any(word in q_lower for word in ["travel", "visit", "trip", "go to", "come to", "chennai", "weekend", "kids", "family", "vacation", "holiday"]):
+                    st.markdown("### ✈️ Travel Advisory for Chennai")
+
+                    temp = weather.get('temperature_2m', 30)
+                    humidity = weather.get('relative_humidity_2m', 70)
+
+                    # Calculate travel score
+                    travel_score = 100
+                    concerns = []
+                    positives = []
+
+                    # Rain assessment
+                    if rain_3day > 100:
+                        travel_score -= 40
+                        concerns.append(f"⚠️ **Heavy rain expected:** {rain_3day:.0f}mm - outdoor activities limited")
+                    elif rain_3day > 50:
+                        travel_score -= 25
+                        concerns.append(f"🟠 **Significant rain:** {rain_3day:.0f}mm - carry umbrellas")
+                    elif rain_3day > 20:
+                        travel_score -= 10
+                        concerns.append(f"🟡 **Some rain possible:** {rain_3day:.0f}mm - plan indoor backup activities")
+                    else:
+                        positives.append(f"🟢 **Low rain chance:** Only {rain_3day:.0f}mm expected")
+
+                    # Flood assessment
+                    if flood_area > 10:
+                        travel_score -= 30
+                        concerns.append(f"⚠️ **Flooding detected:** {flood_area:.1f}km² - some roads may be affected")
+                    elif flood_area > 5:
+                        travel_score -= 15
+                        concerns.append(f"🟠 **Water logging possible:** {flood_area:.1f}km² detected")
+                    else:
+                        positives.append(f"🟢 **Roads clear:** Minimal water logging")
+
+                    # Temperature for kids
+                    if temp > 35:
+                        travel_score -= 20
+                        concerns.append(f"🔥 **Very hot ({temp}°C):** Keep kids hydrated, avoid 11am-3pm outdoors")
+                    elif temp > 32:
+                        travel_score -= 10
+                        concerns.append(f"☀️ **Hot weather ({temp}°C):** Sunscreen and water essential")
+                    else:
+                        positives.append(f"🌡️ **Pleasant temperature:** {temp}°C")
+
+                    # Humidity
+                    if humidity > 80:
+                        travel_score -= 10
+                        concerns.append(f"💧 **Very humid ({humidity}%):** May feel uncomfortable")
+
+                    # Verdict
+                    st.markdown("---")
+                    if travel_score >= 70:
+                        st.success(f"""**VERDICT: GOOD TIME TO VISIT!** ✅
+
+**Travel Score: {travel_score}/100**
+
+Chennai is suitable for a family trip this weekend. Weather conditions are favorable for outdoor activities like Marina Beach, parks, and sightseeing.""")
+                    elif travel_score >= 50:
+                        st.warning(f"""**VERDICT: PROCEED WITH CAUTION** 🟠
+
+**Travel Score: {travel_score}/100**
+
+Travel is possible but plan for some disruptions. Have indoor activities ready (malls, museums, restaurants) as backup.""")
+                    else:
+                        st.error(f"""**VERDICT: CONSIDER POSTPONING** ⚠️
+
+**Travel Score: {travel_score}/100**
+
+Current conditions are not ideal for family travel, especially with children. Heavy rain or flooding may disrupt plans significantly.""")
+
+                    st.markdown("---")
+
+                    if positives:
+                        st.markdown("**Good news:**")
+                        for p in positives:
+                            st.markdown(p)
+
+                    if concerns:
+                        st.markdown("**Watch out for:**")
+                        for c in concerns:
+                            st.markdown(c)
+
+                    st.markdown("---")
+                    st.markdown("""**Tips for Chennai with kids:**
+- 🏖️ Marina Beach is best early morning (6-8am) or evening (5-7pm)
+- 🦁 Vandalur Zoo has good shade but avoid peak heat
+- 🛕 Temples are usually cool inside
+- 🛍️ Phoenix Mall & VR Mall have AC and kids activities
+- 🚗 Traffic is heavy - allow extra travel time""")
+
                 # General weather
                 else:
                     st.markdown("### 📊 Summary")
