@@ -1027,11 +1027,46 @@ def render_ai_assistant(weather, forecast, assets, satellite):
 
     # Custom question
     st.markdown("### Ask Your Own Question")
-    custom_q = st.text_input("Type your question:", placeholder="e.g., What areas are most vulnerable to flooding?")
+
+    # Sample questions - click to fill
+    st.caption("Click a sample question or type your own:")
+    sample_cols = st.columns(4)
+    sample_questions = [
+        "Will it flood after this cyclone?",
+        "Should I travel to Chennai this weekend?",
+        "Which areas are most vulnerable?",
+        "What cascade failures could happen?"
+    ]
+
+    for i, sq in enumerate(sample_questions):
+        with sample_cols[i]:
+            if st.button(sq, key=f"sample_{i}"):
+                st.session_state.prefill_question = sq
+
+    # More sample questions
+    sample_cols2 = st.columns(4)
+    sample_questions2 = [
+        "Is Marina Beach safe today?",
+        "Will there be power cuts?",
+        "How are the reservoirs?",
+        "What's the drought situation?"
+    ]
+
+    for i, sq in enumerate(sample_questions2):
+        with sample_cols2[i]:
+            if st.button(sq, key=f"sample2_{i}"):
+                st.session_state.prefill_question = sq
+
+    # Get prefilled question if any
+    prefill = st.session_state.get('prefill_question', '')
+    custom_q = st.text_input("Type your question:", value=prefill, placeholder="e.g., What areas are most vulnerable to flooding?")
 
     if custom_q:
         st.session_state.ai_question = "custom"
         st.session_state.custom_question = custom_q
+        # Clear prefill after use
+        if 'prefill_question' in st.session_state:
+            del st.session_state.prefill_question
 
     # Generate answer
     if hasattr(st.session_state, 'ai_question'):
