@@ -24,6 +24,7 @@ scikit-learn>=1.4.0
 # Utilities
 python-dotenv>=1.0.0
 loguru>=0.7.0
+pyyaml>=6.0
 
 # LLM (optional - free tier)
 groq>=0.4.0

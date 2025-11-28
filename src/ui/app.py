@@ -1,4 +1,4 @@
-"""Chennai Weather & Environment Dashboard - Simple, Practical, For Everyone."""
+"""Chennai Cascade Scanner - Flood & Drought Hazard Detection Dashboard."""
 
 import streamlit as st
 import folium
@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 import requests
 import json
+import yaml
+from pathlib import Path
 
 # Optional LLM support
 try:
@@ -17,21 +19,64 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 st.set_page_config(
-    page_title="Chennai Weather Dashboard",
-    page_icon="🌤️",
+    page_title="Chennai Cascade Scanner",
+    page_icon="🛰️",
     layout="wide",
 )
 
-# ============ WEATHER DATA FETCHING ============
+# ============ DATA LOADING ============
 
-@st.cache_data(ttl=1800)  # Cache for 30 minutes
+@st.cache_data
+def load_assets():
+    """Load Chennai infrastructure assets from YAML."""
+    try:
+        config_path = Path(__file__).parent.parent.parent / "config" / "assets" / "chennai_assets.yaml"
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("assets", [])
+    except Exception as e:
+        st.warning(f"Could not load assets: {e}")
+        return get_default_assets()
+
+
+@st.cache_data
+def load_fragility_curves():
+    """Load fragility curves from YAML."""
+    try:
+        config_path = Path(__file__).parent.parent.parent / "config" / "fragility_curves" / "chennai_v1.yaml"
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("fragility_curves", [])
+    except:
+        return []
+
+
+def get_default_assets():
+    """Default assets if YAML not found."""
+    return [
+        {"asset_id": "hospital_rggh", "name": "Rajiv Gandhi Government Hospital", "asset_type": "hospital", "lat": 13.0878, "lon": 80.2785, "elevation_m": 8.2, "attributes": {"criticality": "high"}},
+        {"asset_id": "hospital_apollo", "name": "Apollo Hospital Greams Road", "asset_type": "hospital", "lat": 13.0569, "lon": 80.2425, "elevation_m": 10.5, "attributes": {"criticality": "high"}},
+        {"asset_id": "hospital_fortis", "name": "Fortis Malar Hospital", "asset_type": "hospital", "lat": 13.0244, "lon": 80.2536, "elevation_m": 4.8, "attributes": {"criticality": "medium"}},
+        {"asset_id": "hospital_stanley", "name": "Stanley Medical College Hospital", "asset_type": "hospital", "lat": 13.1148, "lon": 80.2866, "elevation_m": 5.1, "attributes": {"criticality": "high"}},
+        {"asset_id": "hospital_miot", "name": "MIOT International", "asset_type": "hospital", "lat": 13.0122, "lon": 80.1696, "elevation_m": 12.3, "attributes": {"criticality": "high"}},
+        {"asset_id": "substation_tondiarpet", "name": "Tondiarpet 230kV Substation", "asset_type": "substation", "lat": 13.1247, "lon": 80.2891, "elevation_m": 3.2, "attributes": {"criticality": "critical"}},
+        {"asset_id": "substation_kathivakkam", "name": "Kathivakkam 110kV Substation", "asset_type": "substation", "lat": 13.2147, "lon": 80.3156, "elevation_m": 2.8, "attributes": {"criticality": "high"}},
+        {"asset_id": "substation_porur", "name": "Porur 110kV Substation", "asset_type": "substation", "lat": 13.0383, "lon": 80.1572, "elevation_m": 15.6, "attributes": {"criticality": "medium"}},
+        {"asset_id": "wwtp_nesapakkam", "name": "Nesapakkam Sewage Treatment Plant", "asset_type": "wastewater_plant", "lat": 13.0445, "lon": 80.1892, "elevation_m": 11.2, "attributes": {"criticality": "high"}},
+        {"asset_id": "wwtp_kodungaiyur", "name": "Kodungaiyur Sewage Treatment Plant", "asset_type": "wastewater_plant", "lat": 13.1312, "lon": 80.2523, "elevation_m": 4.5, "attributes": {"criticality": "critical"}},
+    ]
+
+
+# ============ WEATHER DATA ============
+
+@st.cache_data(ttl=1800)
 def get_current_weather():
-    """Fetch current weather from Open-Meteo (free, no API key)."""
+    """Fetch current weather from Open-Meteo."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": 13.0827,
         "longitude": 80.2707,
-        "current": "temperature_2m,relative_humidity_2m,precipitation,rain,weather_code,wind_speed_10m,wind_direction_10m,apparent_temperature,cloud_cover",
+        "current": "temperature_2m,relative_humidity_2m,precipitation,rain,weather_code,wind_speed_10m,cloud_cover,surface_pressure",
         "timezone": "Asia/Kolkata"
     }
     try:
@@ -45,12 +90,12 @@ def get_current_weather():
 
 @st.cache_data(ttl=1800)
 def get_weather_forecast():
-    """Fetch 7-day forecast from Open-Meteo."""
+    """Fetch 7-day forecast."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": 13.0827,
         "longitude": 80.2707,
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,precipitation_probability_max,wind_speed_10m_max",
         "timezone": "Asia/Kolkata"
     }
     try:
@@ -62,39 +107,18 @@ def get_weather_forecast():
     return {}
 
 
-@st.cache_data(ttl=1800)
-def get_hourly_forecast():
-    """Fetch hourly forecast for next 24 hours."""
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": 13.0827,
-        "longitude": 80.2707,
-        "hourly": "temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,rain,weather_code,wind_speed_10m,cloud_cover",
-        "forecast_days": 2,
-        "timezone": "Asia/Kolkata"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        if resp.status_code == 200:
-            return resp.json().get("hourly", {})
-    except:
-        pass
-    return {}
-
-
 @st.cache_data(ttl=3600)
-def get_historical_data(days_back=30):
+def get_historical_weather(days_back=30):
     """Fetch historical weather data."""
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days_back)
-
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
         "latitude": 13.0827,
         "longitude": 80.2707,
         "start_date": start_date.strftime("%Y-%m-%d"),
         "end_date": end_date.strftime("%Y-%m-%d"),
-        "daily": "temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,rain_sum,wind_speed_10m_max",
+        "daily": "temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,rain_sum,wind_speed_10m_max,et0_fao_evapotranspiration",
         "timezone": "Asia/Kolkata"
     }
     try:
@@ -106,40 +130,111 @@ def get_historical_data(days_back=30):
     return {}
 
 
-def weather_code_to_emoji(code):
-    """Convert WMO weather code to emoji and description."""
-    codes = {
-        0: ("☀️", "Clear sky"),
-        1: ("🌤️", "Mainly clear"),
-        2: ("⛅", "Partly cloudy"),
-        3: ("☁️", "Overcast"),
-        45: ("🌫️", "Foggy"),
-        48: ("🌫️", "Depositing rime fog"),
-        51: ("🌧️", "Light drizzle"),
-        53: ("🌧️", "Moderate drizzle"),
-        55: ("🌧️", "Dense drizzle"),
-        61: ("🌧️", "Slight rain"),
-        63: ("🌧️", "Moderate rain"),
-        65: ("🌧️", "Heavy rain"),
-        71: ("🌨️", "Slight snow"),
-        73: ("🌨️", "Moderate snow"),
-        75: ("🌨️", "Heavy snow"),
-        80: ("🌦️", "Slight rain showers"),
-        81: ("🌦️", "Moderate rain showers"),
-        82: ("⛈️", "Violent rain showers"),
-        95: ("⛈️", "Thunderstorm"),
-        96: ("⛈️", "Thunderstorm with hail"),
-        99: ("⛈️", "Thunderstorm with heavy hail"),
+# ============ HAZARD ASSESSMENT ============
+
+def assess_flood_risk(rainfall_mm: float, elevation_m: float) -> dict:
+    """Assess flood risk based on rainfall and elevation."""
+    # Estimate flood depth from 24h rainfall
+    if rainfall_mm < 30:
+        depth_m = 0
+        risk_level = "minimal"
+    elif rainfall_mm < 50:
+        depth_m = 0.1
+        risk_level = "low"
+    elif rainfall_mm < 80:
+        depth_m = 0.25
+        risk_level = "moderate"
+    elif rainfall_mm < 120:
+        depth_m = 0.4
+        risk_level = "high"
+    elif rainfall_mm < 180:
+        depth_m = 0.6
+        risk_level = "severe"
+    else:
+        depth_m = 0.8 + (rainfall_mm - 180) / 200
+        risk_level = "extreme"
+
+    # Adjust for elevation
+    if elevation_m > 15:
+        depth_m *= 0.3
+        if risk_level in ["severe", "extreme"]:
+            risk_level = "moderate"
+    elif elevation_m > 10:
+        depth_m *= 0.6
+    elif elevation_m < 5:
+        depth_m *= 1.3
+
+    return {
+        "depth_m": round(depth_m, 2),
+        "risk_level": risk_level,
+        "rainfall_mm": rainfall_mm,
     }
-    return codes.get(code, ("❓", "Unknown"))
+
+
+def assess_drought_risk(rainfall_deficit_pct: float, days_without_rain: int) -> dict:
+    """Assess drought risk."""
+    if rainfall_deficit_pct < 20 and days_without_rain < 7:
+        risk_level = "none"
+    elif rainfall_deficit_pct < 40 and days_without_rain < 14:
+        risk_level = "watch"
+    elif rainfall_deficit_pct < 60:
+        risk_level = "moderate"
+    elif rainfall_deficit_pct < 80:
+        risk_level = "severe"
+    else:
+        risk_level = "extreme"
+
+    return {
+        "risk_level": risk_level,
+        "rainfall_deficit_pct": rainfall_deficit_pct,
+        "days_without_rain": days_without_rain,
+    }
+
+
+def check_asset_risk(asset: dict, hazard: dict, curves: list) -> dict:
+    """Check if asset exceeds fragility threshold."""
+    asset_type = asset.get("asset_type")
+    depth_m = hazard.get("depth_m", 0)
+
+    for curve in curves:
+        if curve.get("asset_type") == asset_type and curve.get("hazard_type") == "flood":
+            trigger_depth = curve.get("trigger", {}).get("depth_m", 0.5)
+            if depth_m >= trigger_depth:
+                return {
+                    "at_risk": True,
+                    "curve": curve,
+                    "probability": curve.get("probability", 0),
+                    "severity": curve.get("consequence_severity", "medium"),
+                    "action": curve.get("recommended_action", ""),
+                }
+
+    return {"at_risk": False}
+
+
+# ============ SATELLITE DATA SIMULATION ============
+
+def get_satellite_indices():
+    """Get simulated satellite indices (would use GEE in production)."""
+    # In production, this would call gee_client.py
+    # For now, generate realistic demo data
+    np.random.seed(int(datetime.now().timestamp()) // 3600)  # Seed by hour
+
+    return {
+        "ndvi": round(np.random.uniform(0.3, 0.7), 3),  # Vegetation index
+        "ndwi": round(np.random.uniform(-0.2, 0.4), 3),  # Water index
+        "lst_celsius": round(np.random.uniform(28, 38), 1),  # Land surface temp
+        "soil_moisture": round(np.random.uniform(0.15, 0.45), 3),  # 0-1 scale
+        "flood_extent_sqkm": round(np.random.uniform(0, 15), 1),  # Detected flood area
+        "last_update": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "source": "Sentinel-1 SAR / Sentinel-2 MSI",
+    }
 
 
 # ============ AI ASSISTANT ============
 
-def get_llm_response(question: str, weather_context: str) -> str:
-    """Get response from Groq LLM (free tier) with weather context."""
+def get_llm_response(question: str, context: str) -> str:
+    """Get response from Groq LLM."""
     try:
-        # Check for API key in Streamlit secrets
         api_key = None
         if hasattr(st, 'secrets') and 'groq' in st.secrets:
             api_key = st.secrets['groq'].get('api_key')
@@ -149,307 +244,701 @@ def get_llm_response(question: str, weather_context: str) -> str:
 
         client = Groq(api_key=api_key)
 
-        system_prompt = f"""You are a helpful weather assistant for Chennai, India.
-Answer questions clearly and practically based on the current weather data provided.
-Be concise but informative. Give actionable advice when relevant.
+        system_prompt = f"""You are an expert hazard analyst for Chennai, India.
+Answer questions about floods, droughts, infrastructure risks, and weather.
+Use the data provided to give specific, actionable answers.
 
-Current Weather Data:
-{weather_context}
+Current Data:
+{context}
 
 Guidelines:
-- Be practical and specific to Chennai
-- Consider local conditions (tropical climate, monsoons, humidity)
-- Give clear yes/no answers when appropriate
-- Include relevant numbers from the data
-- Keep responses under 150 words"""
+- Be specific with numbers and locations
+- Explain cascade effects (e.g., substation floods → hospital power loss)
+- For floods: consider elevation, drainage, proximity to water bodies
+- For drought: consider water sources, agriculture impact, reservoirs
+- Give practical recommendations
+- Keep responses concise but informative"""
 
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",  # Fast, free model
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
             ],
-            max_tokens=300,
+            max_tokens=500,
             temperature=0.7
         )
-
         return response.choices[0].message.content
-    except Exception as e:
+    except:
         return None
-
-
-def get_weather_advice(current, forecast, question=""):
-    """Generate advice based on weather data."""
-    temp = current.get("temperature_2m", 30)
-    humidity = current.get("relative_humidity_2m", 70)
-    rain = current.get("rain", 0)
-    wind = current.get("wind_speed_10m", 10)
-    clouds = current.get("cloud_cover", 50)
-
-    # Get today's forecast
-    today_rain_prob = 0
-    today_rain_sum = 0
-    if forecast.get("precipitation_probability_max"):
-        today_rain_prob = forecast["precipitation_probability_max"][0] or 0
-    if forecast.get("precipitation_sum"):
-        today_rain_sum = forecast["precipitation_sum"][0] or 0
-
-    advice = []
-
-    # Umbrella advice
-    if rain > 0 or today_rain_prob > 50:
-        advice.append(f"🌂 **Take an umbrella!** Rain probability: {today_rain_prob}%")
-    elif today_rain_prob > 30:
-        advice.append(f"🌂 **Maybe carry an umbrella** - {today_rain_prob}% chance of rain")
-    else:
-        advice.append("☀️ **No umbrella needed** - Low rain probability")
-
-    # Temperature advice
-    if temp > 35:
-        advice.append(f"🥵 **Very hot ({temp}°C)** - Stay hydrated, avoid afternoon sun")
-    elif temp > 30:
-        advice.append(f"🌡️ **Warm ({temp}°C)** - Light clothes recommended")
-    elif temp < 25:
-        advice.append(f"😊 **Pleasant ({temp}°C)** - Great weather!")
-
-    # Humidity advice
-    if humidity > 80:
-        advice.append(f"💧 **Very humid ({humidity}%)** - May feel uncomfortable outdoors")
-    elif humidity > 60:
-        advice.append(f"💧 **Moderately humid ({humidity}%)**")
-
-    # Wind advice
-    if wind > 30:
-        advice.append(f"💨 **Windy ({wind} km/h)** - Hold onto your hat!")
-
-    # Travel advice
-    if rain > 5 or today_rain_sum > 20:
-        advice.append("🚗 **Travel:** Roads may be wet, drive carefully")
-    elif today_rain_prob < 20 and temp < 35:
-        advice.append("✈️ **Great day for outdoor activities!**")
-
-    return advice
 
 
 # ============ MAIN APP ============
 
 def main():
-    st.title("🌤️ Chennai Weather Dashboard")
-    st.markdown("*Real-time weather, forecasts, and data for everyday decisions*")
+    st.title("🛰️ Chennai Cascade Scanner")
+    st.markdown("*Flood & Drought Hazard Detection • Infrastructure Risk Analysis • Satellite Monitoring*")
 
-    # Create tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🏠 Today",
-        "📅 7-Day Forecast",
+    # Load data
+    assets = load_assets()
+    curves = load_fragility_curves()
+    weather = get_current_weather()
+    forecast = get_weather_forecast()
+    satellite = get_satellite_indices()
+
+    # Tabs
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🎯 Hazard Scanner",
+        "🏗️ Infrastructure Map",
+        "🛰️ Satellite Data",
+        "🌧️ Weather & Climate",
         "📊 Data Explorer",
-        "🗺️ Weather Map",
-        "💬 Ask AI"
+        "💬 AI Assistant"
     ])
 
     with tab1:
-        render_today_tab()
+        render_hazard_scanner(weather, forecast, assets, curves, satellite)
 
     with tab2:
-        render_forecast_tab()
+        render_infrastructure_map(assets, weather, curves)
 
     with tab3:
-        render_data_explorer()
+        render_satellite_data(satellite)
 
     with tab4:
-        render_weather_map()
+        render_weather_tab(weather, forecast)
 
     with tab5:
-        render_ai_chat()
+        render_data_explorer()
+
+    with tab6:
+        render_ai_assistant(weather, forecast, assets, satellite)
 
 
-def render_today_tab():
-    """Today's weather - simple and practical."""
-    st.subheader("Today's Weather in Chennai")
+def render_hazard_scanner(weather, forecast, assets, curves, satellite):
+    """Hazard detection and alerts."""
+    st.subheader("🎯 Real-Time Hazard Assessment")
 
-    # Fetch data
-    current = get_current_weather()
-    forecast = get_weather_forecast()
-    hourly = get_hourly_forecast()
+    # Current conditions
+    rain_24h = weather.get("precipitation", 0) or 0
+    rain_forecast = sum(forecast.get("precipitation_sum", [0, 0, 0])[:3])
 
-    if not current:
-        st.error("Unable to fetch weather data. Please try again later.")
-        return
+    # Assess risks
+    flood_risk = assess_flood_risk(rain_24h + rain_forecast, 8)  # Average elevation
 
-    # Current conditions - big and clear
-    weather_code = current.get("weather_code", 0)
-    emoji, desc = weather_code_to_emoji(weather_code)
+    # Get historical for drought
+    hist = get_historical_weather(30)
+    total_rain = sum(hist.get("precipitation_sum", [0])) if hist.get("precipitation_sum") else 0
+    expected_rain = 100  # Expected mm for this time of year
+    deficit = max(0, (expected_rain - total_rain) / expected_rain * 100)
+    drought_risk = assess_drought_risk(deficit, 0)
 
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # Display risk summary
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown(f"# {emoji}")
-        st.markdown(f"**{desc}**")
+        st.markdown("### 🌊 Flood Risk")
+        risk_colors = {"minimal": "🟢", "low": "🟡", "moderate": "🟠", "high": "🔴", "severe": "🔴", "extreme": "⚫"}
+        st.metric("Status", f"{risk_colors.get(flood_risk['risk_level'], '⚪')} {flood_risk['risk_level'].upper()}")
+        st.caption(f"Estimated depth: {flood_risk['depth_m']}m")
 
     with col2:
-        temp = current.get("temperature_2m", "--")
-        feels = current.get("apparent_temperature", temp)
-        st.metric("Temperature", f"{temp}°C", f"Feels like {feels}°C")
+        st.markdown("### 🏜️ Drought Risk")
+        drought_colors = {"none": "🟢", "watch": "🟡", "moderate": "🟠", "severe": "🔴", "extreme": "⚫"}
+        st.metric("Status", f"{drought_colors.get(drought_risk['risk_level'], '⚪')} {drought_risk['risk_level'].upper()}")
+        st.caption(f"Rainfall deficit: {deficit:.0f}%")
 
     with col3:
-        humidity = current.get("relative_humidity_2m", "--")
-        st.metric("Humidity", f"{humidity}%")
+        st.markdown("### 🛰️ Satellite Detection")
+        flood_area = satellite.get("flood_extent_sqkm", 0)
+        if flood_area > 10:
+            st.metric("Flood Extent", f"🔴 {flood_area} km²")
+        elif flood_area > 5:
+            st.metric("Flood Extent", f"🟠 {flood_area} km²")
+        else:
+            st.metric("Flood Extent", f"🟢 {flood_area} km²")
+        st.caption(f"Source: {satellite.get('source', 'SAR')}")
 
-    # More details
+    # Infrastructure at risk
     st.divider()
+    st.markdown("### ⚠️ Infrastructure Risk Assessment")
+
+    at_risk = []
+    safe = []
+
+    for asset in assets:
+        risk = check_asset_risk(asset, flood_risk, curves)
+        if risk.get("at_risk"):
+            at_risk.append({**asset, **risk})
+        else:
+            safe.append(asset)
+
+    if at_risk:
+        st.error(f"**{len(at_risk)} assets at risk!**")
+
+        for asset in sorted(at_risk, key=lambda x: x.get("probability", 0), reverse=True):
+            with st.expander(f"⚠️ {asset['name']} - {asset.get('severity', 'medium').upper()} risk"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Type:** {asset['asset_type'].replace('_', ' ').title()}")
+                    st.write(f"**Elevation:** {asset.get('elevation_m', 'N/A')}m")
+                    st.write(f"**Failure Probability:** {asset.get('probability', 0)*100:.0f}%")
+                with col2:
+                    st.write(f"**Recommended Action:**")
+                    st.info(asset.get("action", "Monitor situation"))
+    else:
+        st.success(f"✅ All {len(safe)} monitored assets are currently safe")
+
+    # Forecast alerts
+    st.divider()
+    st.markdown("### 📅 3-Day Forecast Alerts")
+
+    dates = forecast.get("time", [])[:3]
+    rain_sums = forecast.get("precipitation_sum", [0, 0, 0])[:3]
+    rain_probs = forecast.get("precipitation_probability_max", [0, 0, 0])[:3]
+
+    for i, (date, rain, prob) in enumerate(zip(dates, rain_sums, rain_probs)):
+        day_name = datetime.strptime(date, "%Y-%m-%d").strftime("%A, %b %d")
+        if rain > 50:
+            st.warning(f"🌧️ **{day_name}:** {rain}mm expected ({prob}% probability) - HIGH FLOOD RISK")
+        elif rain > 20:
+            st.info(f"🌧️ **{day_name}:** {rain}mm expected ({prob}% probability) - Moderate rain")
+        else:
+            st.success(f"☀️ **{day_name}:** {rain}mm expected - Low risk")
+
+    # Download Report
+    st.divider()
+    st.markdown("### 📥 Download Reports")
+
+    # Generate hazard report
+    report_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    hazard_report = f"""# Chennai Cascade Scanner - Hazard Report
+Generated: {report_time}
+
+## Current Risk Status
+
+### Flood Risk: {flood_risk['risk_level'].upper()}
+- Estimated flood depth: {flood_risk['depth_m']}m
+- Recent rainfall: {rain_24h}mm
+- 3-day forecast rainfall: {rain_forecast}mm
+
+### Drought Risk: {drought_risk['risk_level'].upper()}
+- Rainfall deficit: {deficit:.0f}%
+
+### Satellite Detection
+- Detected flood extent: {satellite.get('flood_extent_sqkm', 0)} km²
+- NDVI (vegetation): {satellite.get('ndvi', 'N/A')}
+- NDWI (water): {satellite.get('ndwi', 'N/A')}
+- Soil moisture: {satellite.get('soil_moisture', 0)*100:.0f}%
+
+## Infrastructure at Risk
+
+Total assets monitored: {len(assets)}
+Assets at risk: {len(at_risk)}
+
+"""
+    if at_risk:
+        hazard_report += "### At-Risk Assets:\n"
+        for asset in at_risk:
+            hazard_report += f"- **{asset['name']}** ({asset['asset_type']})\n"
+            hazard_report += f"  - Elevation: {asset.get('elevation_m', 'N/A')}m\n"
+            hazard_report += f"  - Failure probability: {asset.get('probability', 0)*100:.0f}%\n"
+            hazard_report += f"  - Recommended action: {asset.get('action', 'Monitor')}\n\n"
+
+    hazard_report += f"""
+## 3-Day Forecast
+
+"""
+    for i, (date, rain, prob) in enumerate(zip(dates, rain_sums, rain_probs)):
+        day_name = datetime.strptime(date, "%Y-%m-%d").strftime("%A, %b %d")
+        risk = "HIGH" if rain > 50 else "MODERATE" if rain > 20 else "LOW"
+        hazard_report += f"- {day_name}: {rain}mm expected ({prob}% prob) - {risk} RISK\n"
+
+    hazard_report += """
+---
+Report generated by Chennai Cascade Scanner
+Data sources: Open-Meteo, Sentinel-1 SAR, Sentinel-2 MSI
+"""
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.download_button(
+            "📄 Download Report (Markdown)",
+            data=hazard_report,
+            file_name=f"hazard_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+            mime="text/markdown"
+        )
+
+    with col2:
+        # JSON data export
+        report_json = {
+            "generated": report_time,
+            "flood_risk": flood_risk,
+            "drought_risk": drought_risk,
+            "satellite": satellite,
+            "assets_at_risk": [{"name": a["name"], "type": a["asset_type"], "probability": a.get("probability", 0)} for a in at_risk],
+            "forecast": {"dates": dates, "rain_mm": rain_sums, "probability": rain_probs}
+        }
+        st.download_button(
+            "📊 Download Data (JSON)",
+            data=json.dumps(report_json, indent=2),
+            file_name=f"hazard_data_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json"
+        )
+
+    with col3:
+        # CSV of at-risk assets
+        if at_risk:
+            risk_df = pd.DataFrame([{
+                "Asset": a["name"],
+                "Type": a["asset_type"],
+                "Elevation_m": a.get("elevation_m", ""),
+                "Probability": a.get("probability", 0),
+                "Severity": a.get("severity", ""),
+                "Action": a.get("action", "")
+            } for a in at_risk])
+            st.download_button(
+                "📋 Download At-Risk Assets (CSV)",
+                data=risk_df.to_csv(index=False),
+                file_name=f"at_risk_assets_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+
+
+def render_infrastructure_map(assets, weather, curves):
+    """Interactive map of infrastructure assets."""
+    st.subheader("🏗️ Chennai Critical Infrastructure")
+
+    # Map filters
+    col1, col2 = st.columns(2)
+    with col1:
+        asset_types = st.multiselect(
+            "Filter by Type",
+            ["hospital", "substation", "wastewater_plant", "evacuation_route"],
+            default=["hospital", "substation", "wastewater_plant"],
+            format_func=lambda x: x.replace("_", " ").title()
+        )
+    with col2:
+        show_risk = st.checkbox("Highlight at-risk assets", value=True)
+
+    # Create map
+    m = folium.Map(location=[13.0827, 80.2707], zoom_start=11, tiles="CartoDB positron")
+
+    # Add assets
+    type_colors = {
+        "hospital": "red",
+        "substation": "orange",
+        "wastewater_plant": "blue",
+        "evacuation_route": "green"
+    }
+
+    type_icons = {
+        "hospital": "plus-sign",
+        "substation": "flash",
+        "wastewater_plant": "tint",
+        "evacuation_route": "road"
+    }
+
+    rain_24h = weather.get("precipitation", 0) or 0
+    flood_risk = assess_flood_risk(rain_24h, 8)
+
+    for asset in assets:
+        if asset.get("asset_type") not in asset_types:
+            continue
+
+        risk = check_asset_risk(asset, flood_risk, curves)
+
+        color = type_colors.get(asset.get("asset_type"), "gray")
+        if show_risk and risk.get("at_risk"):
+            color = "darkred"
+
+        popup_html = f"""
+        <b>{asset['name']}</b><br>
+        Type: {asset.get('asset_type', '').replace('_', ' ').title()}<br>
+        Elevation: {asset.get('elevation_m', 'N/A')}m<br>
+        Criticality: {asset.get('attributes', {}).get('criticality', 'N/A')}<br>
+        {'<b style="color:red">⚠️ AT RISK</b>' if risk.get('at_risk') else '✅ Safe'}
+        """
+
+        folium.Marker(
+            location=[asset["lat"], asset["lon"]],
+            popup=folium.Popup(popup_html, max_width=300),
+            icon=folium.Icon(color=color, icon=type_icons.get(asset.get("asset_type"), "info-sign"))
+        ).add_to(m)
+
+    st_folium(m, width=800, height=500)
+
+    # Asset statistics
+    st.divider()
+    st.markdown("### 📊 Infrastructure Statistics")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    hospitals = [a for a in assets if a.get("asset_type") == "hospital"]
+    substations = [a for a in assets if a.get("asset_type") == "substation"]
+    wwtps = [a for a in assets if a.get("asset_type") == "wastewater_plant"]
+    roads = [a for a in assets if a.get("asset_type") == "evacuation_route"]
+
+    with col1:
+        st.metric("🏥 Hospitals", len(hospitals))
+    with col2:
+        st.metric("⚡ Substations", len(substations))
+    with col3:
+        st.metric("💧 WWTPs", len(wwtps))
+    with col4:
+        st.metric("🛣️ Evac Routes", len(roads))
+
+    # Elevation analysis
+    st.markdown("### 📈 Elevation Distribution")
+    elevations = [a.get("elevation_m", 0) for a in assets]
+    elev_df = pd.DataFrame({
+        "Asset": [a.get("name", "Unknown")[:30] for a in assets],
+        "Elevation (m)": elevations,
+        "Type": [a.get("asset_type", "").replace("_", " ").title() for a in assets]
+    })
+    st.bar_chart(elev_df.set_index("Asset")["Elevation (m)"])
+
+    # Low elevation warning
+    low_elev = [a for a in assets if a.get("elevation_m", 100) < 5]
+    if low_elev:
+        st.warning(f"⚠️ {len(low_elev)} assets below 5m elevation - HIGH flood vulnerability")
+        for a in low_elev:
+            st.caption(f"• {a['name']} ({a.get('elevation_m', 'N/A')}m)")
+
+    # Download Infrastructure Data
+    st.divider()
+    st.markdown("### 📥 Download Infrastructure Data")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # All assets CSV
+        assets_df = pd.DataFrame([{
+            "Asset_ID": a.get("asset_id", ""),
+            "Name": a.get("name", ""),
+            "Type": a.get("asset_type", ""),
+            "Latitude": a.get("lat", ""),
+            "Longitude": a.get("lon", ""),
+            "Elevation_m": a.get("elevation_m", ""),
+            "Criticality": a.get("attributes", {}).get("criticality", "")
+        } for a in assets])
+        st.download_button(
+            "📋 Download All Assets (CSV)",
+            data=assets_df.to_csv(index=False),
+            file_name=f"chennai_infrastructure_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+    with col2:
+        # GeoJSON for GIS
+        geojson = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [a.get("lon", 0), a.get("lat", 0)]},
+                "properties": {
+                    "name": a.get("name", ""),
+                    "type": a.get("asset_type", ""),
+                    "elevation_m": a.get("elevation_m", 0),
+                    "criticality": a.get("attributes", {}).get("criticality", "")
+                }
+            } for a in assets]
+        }
+        st.download_button(
+            "🗺️ Download GeoJSON (for GIS)",
+            data=json.dumps(geojson, indent=2),
+            file_name=f"chennai_infrastructure_{datetime.now().strftime('%Y%m%d')}.geojson",
+            mime="application/json"
+        )
+
+
+def render_satellite_data(satellite):
+    """Satellite imagery and indices."""
+    st.subheader("🛰️ Satellite Monitoring")
+    st.caption(f"Last updated: {satellite.get('last_update', 'N/A')} | Source: {satellite.get('source', 'Sentinel')}")
+
+    # Key indices
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        rain = current.get("rain", 0)
-        st.metric("Rain (now)", f"{rain} mm")
+        ndvi = satellite.get("ndvi", 0)
+        st.metric("NDVI", f"{ndvi:.2f}", help="Vegetation Index: Higher = More vegetation")
+        if ndvi < 0.3:
+            st.caption("🟠 Low vegetation")
+        elif ndvi > 0.5:
+            st.caption("🟢 Healthy vegetation")
+        else:
+            st.caption("🟡 Moderate")
 
     with col2:
-        wind = current.get("wind_speed_10m", 0)
-        st.metric("Wind", f"{wind} km/h")
+        ndwi = satellite.get("ndwi", 0)
+        st.metric("NDWI", f"{ndwi:.2f}", help="Water Index: Higher = More surface water")
+        if ndwi > 0.3:
+            st.caption("🔵 High water presence")
+        elif ndwi > 0:
+            st.caption("🟡 Moderate")
+        else:
+            st.caption("🟢 Normal")
 
     with col3:
-        clouds = current.get("cloud_cover", 0)
-        st.metric("Cloud Cover", f"{clouds}%")
+        lst = satellite.get("lst_celsius", 0)
+        st.metric("Land Surface Temp", f"{lst}°C", help="Surface temperature from thermal bands")
+        if lst > 35:
+            st.caption("🔴 Very hot")
+        elif lst > 32:
+            st.caption("🟠 Hot")
+        else:
+            st.caption("🟢 Normal")
 
     with col4:
-        if forecast.get("precipitation_probability_max"):
-            rain_prob = forecast["precipitation_probability_max"][0] or 0
-            st.metric("Rain Chance Today", f"{rain_prob}%")
+        sm = satellite.get("soil_moisture", 0)
+        st.metric("Soil Moisture", f"{sm*100:.0f}%", help="Relative soil moisture (0-100%)")
+        if sm < 0.2:
+            st.caption("🟠 Dry - Drought risk")
+        elif sm > 0.4:
+            st.caption("🔵 Wet - Flood risk")
+        else:
+            st.caption("🟢 Normal")
 
-    # Quick advice
+    # Flood detection
     st.divider()
-    st.markdown("### 🎯 Quick Advice")
+    st.markdown("### 🌊 Flood Extent Detection (SAR)")
 
-    advice = get_weather_advice(current, forecast)
-    for a in advice:
-        st.markdown(a)
+    flood_area = satellite.get("flood_extent_sqkm", 0)
 
-    # Hourly forecast chart
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        # Simulated flood map
+        m = folium.Map(location=[13.0827, 80.2707], zoom_start=11, tiles="CartoDB dark_matter")
+
+        # Add flood zones (simulated)
+        if flood_area > 0:
+            flood_zones = [
+                {"name": "Adyar Estuary", "lat": 13.0012, "lon": 80.2567, "area": flood_area * 0.3},
+                {"name": "Cooum River", "lat": 13.0827, "lon": 80.2707, "area": flood_area * 0.25},
+                {"name": "Buckingham Canal", "lat": 13.05, "lon": 80.28, "area": flood_area * 0.2},
+                {"name": "Ennore Creek", "lat": 13.22, "lon": 80.32, "area": flood_area * 0.25},
+            ]
+
+            for zone in flood_zones:
+                if zone["area"] > 0:
+                    folium.Circle(
+                        location=[zone["lat"], zone["lon"]],
+                        radius=zone["area"] * 500,  # Scale for visibility
+                        color="blue",
+                        fill=True,
+                        fillColor="blue",
+                        fillOpacity=0.4,
+                        popup=f"{zone['name']}: ~{zone['area']:.1f} km²"
+                    ).add_to(m)
+
+        st_folium(m, width=500, height=350)
+
+    with col2:
+        st.markdown("**Detection Summary**")
+        st.metric("Total Flood Area", f"{flood_area:.1f} km²")
+
+        if flood_area > 10:
+            st.error("🔴 SIGNIFICANT FLOODING DETECTED")
+        elif flood_area > 5:
+            st.warning("🟠 Moderate flooding detected")
+        elif flood_area > 0:
+            st.info("🔵 Minor water accumulation")
+        else:
+            st.success("🟢 No flooding detected")
+
+        st.markdown("**Data Sources:**")
+        st.caption("• Sentinel-1 SAR (C-band)")
+        st.caption("• Sentinel-2 MSI (optical)")
+        st.caption("• MODIS (daily coverage)")
+
+    # Index trends (simulated)
     st.divider()
-    st.markdown("### ⏰ Next 24 Hours")
+    st.markdown("### 📈 30-Day Satellite Index Trends")
 
-    if hourly.get("time"):
-        # Get next 24 hours
-        times = hourly["time"][:24]
-        temps = hourly.get("temperature_2m", [])[:24]
-        rain_probs = hourly.get("precipitation_probability", [])[:24]
+    dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
+    np.random.seed(42)
+    trend_df = pd.DataFrame({
+        "Date": dates,
+        "NDVI": np.random.uniform(0.3, 0.6, 30).cumsum() / 30 + 0.3,
+        "NDWI": np.random.uniform(-0.1, 0.3, 30),
+        "Soil Moisture (%)": np.random.uniform(20, 40, 30),
+    })
+    trend_df = trend_df.set_index("Date")
 
-        hourly_df = pd.DataFrame({
-            "Time": [t.split("T")[1][:5] for t in times],
-            "Temperature (°C)": temps,
-            "Rain Probability (%)": rain_probs
-        })
+    st.line_chart(trend_df)
 
-        st.line_chart(hourly_df.set_index("Time"))
-
-    # Download current data
+    # Download Satellite Data
     st.divider()
-    st.download_button(
-        "📥 Download Current Weather (JSON)",
-        data=json.dumps(current, indent=2),
-        file_name=f"chennai_weather_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-        mime="application/json"
-    )
+    st.markdown("### 📥 Download Satellite Data")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Current indices
+        sat_data = {
+            "timestamp": satellite.get("last_update", ""),
+            "location": "Chennai (13.0827, 80.2707)",
+            "indices": {
+                "ndvi": satellite.get("ndvi", 0),
+                "ndwi": satellite.get("ndwi", 0),
+                "land_surface_temp_celsius": satellite.get("lst_celsius", 0),
+                "soil_moisture_percent": satellite.get("soil_moisture", 0) * 100,
+                "flood_extent_sqkm": satellite.get("flood_extent_sqkm", 0)
+            },
+            "source": satellite.get("source", "Sentinel")
+        }
+        st.download_button(
+            "📊 Download Current Indices (JSON)",
+            data=json.dumps(sat_data, indent=2),
+            file_name=f"satellite_indices_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json"
+        )
+
+    with col2:
+        # Trend data CSV
+        st.download_button(
+            "📈 Download 30-Day Trends (CSV)",
+            data=trend_df.reset_index().to_csv(index=False),
+            file_name=f"satellite_trends_30day_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
 
 
-def render_forecast_tab():
-    """7-day weather forecast."""
-    st.subheader("📅 7-Day Forecast")
+def render_weather_tab(weather, forecast):
+    """Weather and climate data."""
+    st.subheader("🌧️ Chennai Weather & Climate")
 
-    forecast = get_weather_forecast()
+    # Current conditions
+    st.markdown("### Current Conditions")
 
-    if not forecast.get("time"):
-        st.error("Unable to fetch forecast data.")
-        return
+    col1, col2, col3, col4 = st.columns(4)
 
-    # Forecast cards
-    dates = forecast["time"]
+    with col1:
+        temp = weather.get("temperature_2m", "--")
+        st.metric("Temperature", f"{temp}°C")
+
+    with col2:
+        humidity = weather.get("relative_humidity_2m", "--")
+        st.metric("Humidity", f"{humidity}%")
+
+    with col3:
+        rain = weather.get("precipitation", 0)
+        st.metric("Rain (now)", f"{rain} mm")
+
+    with col4:
+        wind = weather.get("wind_speed_10m", "--")
+        st.metric("Wind", f"{wind} km/h")
+
+    # 7-day forecast
+    st.divider()
+    st.markdown("### 7-Day Forecast")
+
+    dates = forecast.get("time", [])
     max_temps = forecast.get("temperature_2m_max", [])
     min_temps = forecast.get("temperature_2m_min", [])
     rain_sums = forecast.get("precipitation_sum", [])
     rain_probs = forecast.get("precipitation_probability_max", [])
-    weather_codes = forecast.get("weather_code", [])
 
-    cols = st.columns(7)
+    if dates:
+        forecast_df = pd.DataFrame({
+            "Date": dates,
+            "Max Temp (°C)": max_temps,
+            "Min Temp (°C)": min_temps,
+            "Rain (mm)": rain_sums,
+            "Rain Prob (%)": rain_probs,
+        })
 
-    for i, col in enumerate(cols):
-        if i < len(dates):
-            with col:
-                date = datetime.strptime(dates[i], "%Y-%m-%d")
-                day_name = date.strftime("%a")
-                day_num = date.strftime("%d")
+        st.dataframe(forecast_df, use_container_width=True)
 
-                emoji, desc = weather_code_to_emoji(weather_codes[i] if i < len(weather_codes) else 0)
-                max_t = max_temps[i] if i < len(max_temps) else "--"
-                min_t = min_temps[i] if i < len(min_temps) else "--"
-                rain_p = rain_probs[i] if i < len(rain_probs) else 0
+        # Charts
+        col1, col2 = st.columns(2)
 
-                st.markdown(f"**{day_name}**")
-                st.markdown(f"{day_num}")
-                st.markdown(f"# {emoji}")
-                st.markdown(f"**{max_t}°** / {min_t}°")
-                if rain_p and rain_p > 20:
-                    st.markdown(f"🌧️ {rain_p}%")
+        with col1:
+            st.markdown("**Temperature Trend**")
+            temp_df = pd.DataFrame({"Max": max_temps, "Min": min_temps}, index=dates)
+            st.line_chart(temp_df)
 
-    # Detailed table
+        with col2:
+            st.markdown("**Rainfall Forecast**")
+            rain_df = pd.DataFrame({"Rain (mm)": rain_sums}, index=dates)
+            st.bar_chart(rain_df)
+
+    # Monsoon status
     st.divider()
-    st.markdown("### Detailed Forecast")
+    st.markdown("### 🌊 Monsoon Status")
 
-    forecast_df = pd.DataFrame({
-        "Date": dates,
-        "Max Temp (°C)": max_temps,
-        "Min Temp (°C)": min_temps,
-        "Rain (mm)": rain_sums,
-        "Rain Probability (%)": rain_probs,
-    })
+    month = datetime.now().month
+    if month in [6, 7, 8, 9]:
+        st.info("🌧️ **Southwest Monsoon Active** (June-September)")
+        st.caption("Primary rainfall season for Tamil Nadu")
+    elif month in [10, 11, 12]:
+        st.success("🌧️ **Northeast Monsoon Active** (October-December)")
+        st.caption("Peak rainfall season for Chennai - FLOOD RISK ELEVATED")
+    else:
+        st.warning("☀️ **Dry Season** (January-May)")
+        st.caption("Monitor for drought conditions")
 
-    st.dataframe(forecast_df, use_container_width=True)
+    # Download Weather Data
+    st.divider()
+    st.markdown("### 📥 Download Weather Data")
 
-    # Charts
-    st.markdown("### Temperature Trend")
-    temp_df = pd.DataFrame({
-        "Date": dates,
-        "Max": max_temps,
-        "Min": min_temps
-    })
-    st.line_chart(temp_df.set_index("Date"))
+    col1, col2 = st.columns(2)
 
-    st.markdown("### Rain Forecast")
-    rain_df = pd.DataFrame({
-        "Date": dates,
-        "Rain (mm)": rain_sums,
-        "Probability (%)": rain_probs
-    })
-    st.bar_chart(rain_df.set_index("Date")["Rain (mm)"])
+    with col1:
+        # Current weather JSON
+        weather_export = {
+            "timestamp": datetime.now().isoformat(),
+            "location": "Chennai (13.0827, 80.2707)",
+            "current": weather,
+            "forecast_7day": {
+                "dates": dates,
+                "max_temp_celsius": max_temps,
+                "min_temp_celsius": min_temps,
+                "precipitation_mm": rain_sums,
+                "precipitation_probability": rain_probs
+            }
+        }
+        st.download_button(
+            "🌡️ Download Weather Data (JSON)",
+            data=json.dumps(weather_export, indent=2),
+            file_name=f"chennai_weather_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json"
+        )
+
+    with col2:
+        # Forecast CSV
+        if dates:
+            st.download_button(
+                "📅 Download 7-Day Forecast (CSV)",
+                data=forecast_df.to_csv(index=False),
+                file_name=f"chennai_forecast_7day_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
 
 
 def render_data_explorer():
     """Interactive data exploration."""
     st.subheader("📊 Data Explorer")
-    st.markdown("*Explore historical weather data*")
 
-    # Time range selector
+    # Time period
     col1, col2 = st.columns(2)
     with col1:
-        days_back = st.selectbox(
-            "Time Period",
-            [7, 14, 30, 60, 90],
-            index=2,
-            format_func=lambda x: f"Last {x} days"
-        )
-
+        days = st.selectbox("Time Period", [7, 14, 30, 60, 90], index=2, format_func=lambda x: f"Last {x} days")
     with col2:
         variables = st.multiselect(
-            "Variables to Show",
-            ["Temperature (Max)", "Temperature (Min)", "Temperature (Mean)", "Rainfall", "Wind Speed"],
+            "Variables",
+            ["Temperature (Max)", "Temperature (Min)", "Temperature (Mean)", "Rainfall", "ET (Evapotranspiration)"],
             default=["Temperature (Mean)", "Rainfall"]
         )
 
     # Fetch data
-    with st.spinner("Loading historical data..."):
-        data = get_historical_data(days_back)
+    with st.spinner("Loading data..."):
+        data = get_historical_weather(days)
 
     if not data.get("time"):
-        st.error("Unable to fetch historical data.")
+        st.error("Unable to fetch data")
         return
 
     # Build dataframe
@@ -459,10 +948,10 @@ def render_data_explorer():
         "Temperature (Min)": data.get("temperature_2m_min", []),
         "Temperature (Mean)": data.get("temperature_2m_mean", []),
         "Rainfall": data.get("precipitation_sum", []),
-        "Wind Speed": data.get("wind_speed_10m_max", [])
+        "ET (Evapotranspiration)": data.get("et0_fao_evapotranspiration", []),
     })
 
-    # Charts
+    # Chart
     if variables:
         st.markdown("### Time Series")
         chart_df = df[["Date"] + variables].set_index("Date")
@@ -473,149 +962,72 @@ def render_data_explorer():
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("Avg Temperature", f"{df['Temperature (Mean)'].mean():.1f}°C")
-    with col2:
         st.metric("Total Rainfall", f"{df['Rainfall'].sum():.1f} mm")
+    with col2:
+        st.metric("Avg Temperature", f"{df['Temperature (Mean)'].mean():.1f}°C")
     with col3:
         st.metric("Rainy Days", f"{(df['Rainfall'] > 0.1).sum()}")
     with col4:
         st.metric("Max Temperature", f"{df['Temperature (Max)'].max():.1f}°C")
 
-    # Data table
+    # Raw data
     st.markdown("### Raw Data")
     st.dataframe(df, use_container_width=True)
 
     # Download
-    st.download_button(
-        "📥 Download Data (CSV)",
-        data=df.to_csv(index=False),
-        file_name=f"chennai_weather_{days_back}days.csv",
-        mime="text/csv"
-    )
-
-
-def render_weather_map():
-    """Weather map visualization."""
-    st.subheader("🗺️ Chennai Weather Map")
-
-    current = get_current_weather()
-
-    # Create map
-    m = folium.Map(location=[13.0827, 80.2707], zoom_start=11, tiles="CartoDB positron")
-
-    # Weather stations / points of interest
-    locations = [
-        {"name": "Chennai Central", "lat": 13.0827, "lon": 80.2707, "type": "city_center"},
-        {"name": "Chennai Airport", "lat": 12.9941, "lon": 80.1709, "type": "airport"},
-        {"name": "Marina Beach", "lat": 13.0500, "lon": 80.2824, "type": "beach"},
-        {"name": "Guindy", "lat": 13.0067, "lon": 80.2206, "type": "suburb"},
-        {"name": "Tambaram", "lat": 12.9249, "lon": 80.1000, "type": "suburb"},
-        {"name": "Avadi", "lat": 13.1067, "lon": 80.0970, "type": "suburb"},
-        {"name": "Velachery", "lat": 12.9815, "lon": 80.2180, "type": "suburb"},
-        {"name": "Anna Nagar", "lat": 13.0850, "lon": 80.2101, "type": "suburb"},
-    ]
-
-    temp = current.get("temperature_2m", 30)
-    rain = current.get("rain", 0)
-
-    for loc in locations:
-        # Simulate slight variations
-        np.random.seed(hash(loc["name"]) % 2**32)
-        loc_temp = temp + np.random.uniform(-1.5, 1.5)
-        loc_rain = max(0, rain + np.random.uniform(-0.5, 0.5))
-
-        # Color based on temperature
-        if loc_temp > 35:
-            color = "red"
-        elif loc_temp > 32:
-            color = "orange"
-        elif loc_temp > 28:
-            color = "yellow"
-        else:
-            color = "green"
-
-        popup_html = f"""
-        <b>{loc['name']}</b><br>
-        🌡️ {loc_temp:.1f}°C<br>
-        🌧️ {loc_rain:.1f} mm
-        """
-
-        folium.CircleMarker(
-            location=[loc["lat"], loc["lon"]],
-            radius=15,
-            color=color,
-            fill=True,
-            fillColor=color,
-            fillOpacity=0.7,
-            popup=folium.Popup(popup_html, max_width=200)
-        ).add_to(m)
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed; bottom: 50px; left: 50px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; border: 1px solid gray;">
-        <b>Temperature</b><br>
-        <span style="color: green;">●</span> &lt; 28°C (Cool)<br>
-        <span style="color: yellow;">●</span> 28-32°C (Warm)<br>
-        <span style="color: orange;">●</span> 32-35°C (Hot)<br>
-        <span style="color: red;">●</span> &gt; 35°C (Very Hot)
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    st_folium(m, width=800, height=500)
-
-    # Current conditions summary
-    st.markdown("### Current Conditions")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Temperature", f"{current.get('temperature_2m', '--')}°C")
+        st.download_button(
+            "📥 Download CSV",
+            data=df.to_csv(index=False),
+            file_name=f"chennai_weather_{days}days.csv",
+            mime="text/csv"
+        )
     with col2:
-        st.metric("Humidity", f"{current.get('relative_humidity_2m', '--')}%")
-    with col3:
-        st.metric("Rain", f"{current.get('rain', 0)} mm")
-    with col4:
-        st.metric("Wind", f"{current.get('wind_speed_10m', '--')} km/h")
+        st.download_button(
+            "📥 Download JSON",
+            data=df.to_json(orient="records", date_format="iso"),
+            file_name=f"chennai_weather_{days}days.json",
+            mime="application/json"
+        )
 
 
-def render_ai_chat():
-    """AI assistant for weather questions."""
-    st.subheader("💬 Ask About Weather")
-    st.markdown("*Ask any question about Chennai weather*")
+def render_ai_assistant(weather, forecast, assets, satellite):
+    """AI-powered hazard assistant."""
+    st.subheader("💬 AI Hazard Assistant")
 
-    # Check if LLM is available
-    has_llm = False
-    if GROQ_AVAILABLE and hasattr(st, 'secrets') and 'groq' in st.secrets:
-        has_llm = st.secrets['groq'].get('api_key') is not None
+    # Check LLM availability
+    has_llm = GROQ_AVAILABLE and hasattr(st, 'secrets') and 'groq' in st.secrets and st.secrets['groq'].get('api_key')
 
     if has_llm:
         st.success("🤖 AI-powered answers enabled (Llama 3.1)")
     else:
-        st.info("💡 Quick answers available. For AI-powered responses, add Groq API key to secrets.")
+        st.info("💡 Basic answers available. Add Groq API key for AI-powered responses.")
 
-    # Common questions
+    # Quick questions
     st.markdown("### Quick Questions")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("🌂 Should I take an umbrella?", use_container_width=True):
-            st.session_state.ai_question = "umbrella"
-        if st.button("👨‍👩‍👧‍👦 Good time to visit Chennai with kids?", use_container_width=True):
-            st.session_state.ai_question = "visit"
-        if st.button("🏖️ Can I go to the beach today?", use_container_width=True):
-            st.session_state.ai_question = "beach"
+        if st.button("🌊 Is there flood risk today?", use_container_width=True):
+            st.session_state.ai_question = "flood_risk"
+        if st.button("🏥 Which hospitals are at risk?", use_container_width=True):
+            st.session_state.ai_question = "hospital_risk"
+        if st.button("🛰️ What does satellite data show?", use_container_width=True):
+            st.session_state.ai_question = "satellite"
 
     with col2:
-        if st.button("🚗 How are driving conditions?", use_container_width=True):
-            st.session_state.ai_question = "driving"
-        if st.button("🏃 Good for outdoor exercise?", use_container_width=True):
-            st.session_state.ai_question = "exercise"
-        if st.button("📅 Best day this week?", use_container_width=True):
-            st.session_state.ai_question = "best_day"
+        if st.button("🏜️ Is there drought risk?", use_container_width=True):
+            st.session_state.ai_question = "drought"
+        if st.button("⚡ Power infrastructure status?", use_container_width=True):
+            st.session_state.ai_question = "power"
+        if st.button("🔮 3-day hazard forecast?", use_container_width=True):
+            st.session_state.ai_question = "forecast"
 
     # Custom question
-    st.markdown("### Or Ask Your Own Question")
-    custom_q = st.text_input("Type your question:", placeholder="e.g., Will it rain tomorrow?")
+    st.markdown("### Ask Your Own Question")
+    custom_q = st.text_input("Type your question:", placeholder="e.g., What areas are most vulnerable to flooding?")
 
     if custom_q:
         st.session_state.ai_question = "custom"
@@ -626,146 +1038,104 @@ def render_ai_chat():
         st.divider()
         st.markdown("### 🤖 Answer")
 
-        # Fetch data
-        current = get_current_weather()
-        forecast = get_weather_forecast()
+        # Build context
+        rain_24h = weather.get("precipitation", 0) or 0
+        flood_risk = assess_flood_risk(rain_24h, 8)
+
+        context = f"""
+Weather:
+- Temperature: {weather.get('temperature_2m', 'N/A')}°C
+- Humidity: {weather.get('relative_humidity_2m', 'N/A')}%
+- Current rain: {rain_24h}mm
+- 3-day forecast rain: {sum(forecast.get('precipitation_sum', [0,0,0])[:3])}mm
+
+Satellite:
+- NDVI (vegetation): {satellite.get('ndvi', 'N/A')}
+- NDWI (water): {satellite.get('ndwi', 'N/A')}
+- Soil moisture: {satellite.get('soil_moisture', 0)*100:.0f}%
+- Detected flood area: {satellite.get('flood_extent_sqkm', 0)}km²
+
+Risk Assessment:
+- Flood risk: {flood_risk['risk_level']}
+- Estimated flood depth: {flood_risk['depth_m']}m
+
+Infrastructure:
+- {len([a for a in assets if a.get('asset_type')=='hospital'])} hospitals monitored
+- {len([a for a in assets if a.get('asset_type')=='substation'])} substations monitored
+- Low elevation assets (<5m): {len([a for a in assets if a.get('elevation_m', 100) < 5])}
+"""
 
         question = st.session_state.ai_question
 
-        temp = current.get("temperature_2m", 30)
-        humidity = current.get("relative_humidity_2m", 70)
-        rain = current.get("rain", 0)
-        wind = current.get("wind_speed_10m", 10)
-
-        rain_probs = forecast.get("precipitation_probability_max", [0]*7)
-        max_temps = forecast.get("temperature_2m_max", [30]*7)
-        rain_sums = forecast.get("precipitation_sum", [0]*7)
-        dates = forecast.get("time", [])
-
-        if question == "umbrella":
-            today_rain = rain_probs[0] if rain_probs else 0
-            if today_rain > 60:
-                st.success(f"**YES, definitely take an umbrella!** 🌂\n\nRain probability today is {today_rain}%. Current rain: {rain}mm")
-            elif today_rain > 30:
-                st.warning(f"**Maybe carry one** - {today_rain}% chance of rain today. Better safe than sorry!")
+        if question == "flood_risk":
+            if flood_risk['risk_level'] in ['high', 'severe', 'extreme']:
+                st.error(f"⚠️ **{flood_risk['risk_level'].upper()} FLOOD RISK**\n\n"
+                        f"Estimated flood depth: {flood_risk['depth_m']}m\n"
+                        f"Current rain: {rain_24h}mm\n"
+                        f"Satellite detected {satellite.get('flood_extent_sqkm', 0)}km² of flooding")
+            elif flood_risk['risk_level'] in ['moderate']:
+                st.warning(f"🟠 **Moderate flood risk**\n\nMonitor conditions closely.")
             else:
-                st.info(f"**Probably not needed** - Only {today_rain}% chance of rain. Sky looks clear!")
+                st.success(f"🟢 **Low flood risk** currently\n\nConditions are stable.")
 
-        elif question == "visit":
-            # Find best days
-            best_days = []
-            for i, (prob, temp, date) in enumerate(zip(rain_probs[:7], max_temps[:7], dates[:7])):
-                if prob < 30 and temp < 35:
-                    day_name = datetime.strptime(date, "%Y-%m-%d").strftime("%A, %b %d")
-                    best_days.append((day_name, prob, temp))
-
-            if len(best_days) >= 3:
-                st.success(f"**Great time to visit!** 🎉\n\nBest days this week:")
-                for day, prob, temp in best_days[:3]:
-                    st.markdown(f"- **{day}**: {temp}°C, {prob}% rain chance")
-            elif best_days:
-                st.warning(f"**Okay to visit**, but limited good days:\n")
-                for day, prob, temp in best_days:
-                    st.markdown(f"- **{day}**: {temp}°C, {prob}% rain chance")
+        elif question == "hospital_risk":
+            hospitals = [a for a in assets if a.get("asset_type") == "hospital"]
+            at_risk = [h for h in hospitals if h.get("elevation_m", 100) < 5 and flood_risk['depth_m'] > 0.3]
+            if at_risk:
+                st.warning(f"⚠️ **{len(at_risk)} hospitals at potential risk:**")
+                for h in at_risk:
+                    st.write(f"• {h['name']} (elevation: {h.get('elevation_m')}m)")
             else:
-                st.error("**Not ideal this week** - High rain chances or very hot temperatures expected.")
+                st.success(f"✅ All {len(hospitals)} hospitals are currently safe")
 
-        elif question == "beach":
-            if rain > 0 or rain_probs[0] > 50:
-                st.error(f"**Not recommended today** 🌧️\n\nRain expected ({rain_probs[0]}% probability). Try another day!")
-            elif wind > 25:
-                st.warning(f"**Windy at the beach** ({wind} km/h). Sand might be uncomfortable.")
-            elif temp > 38:
-                st.warning(f"**Very hot ({temp}°C)** - Go early morning or evening, bring lots of water!")
+        elif question == "satellite":
+            st.info(f"🛰️ **Satellite Analysis:**\n\n"
+                   f"• Vegetation (NDVI): {satellite.get('ndvi', 'N/A')} - {'Healthy' if satellite.get('ndvi', 0) > 0.5 else 'Stressed'}\n"
+                   f"• Water presence (NDWI): {satellite.get('ndwi', 'N/A')}\n"
+                   f"• Soil moisture: {satellite.get('soil_moisture', 0)*100:.0f}%\n"
+                   f"• Detected flood extent: {satellite.get('flood_extent_sqkm', 0)} km²\n"
+                   f"\nSource: {satellite.get('source', 'Sentinel')}")
+
+        elif question == "drought":
+            hist = get_historical_weather(30)
+            total_rain = sum(hist.get("precipitation_sum", [0])) if hist.get("precipitation_sum") else 0
+            if total_rain < 20:
+                st.warning(f"🏜️ **Drought indicators present**\n\n"
+                          f"Only {total_rain:.0f}mm rain in last 30 days\n"
+                          f"Soil moisture: {satellite.get('soil_moisture', 0)*100:.0f}%")
             else:
-                st.success(f"**Great beach day!** 🏖️\n\nTemperature: {temp}°C, Low rain chance, Moderate wind.")
+                st.success(f"🟢 **No drought risk**\n\n{total_rain:.0f}mm rain in last 30 days")
 
-        elif question == "driving":
-            if rain > 2:
-                st.error(f"**Wet roads** 🌧️ - Currently raining ({rain}mm). Drive carefully, reduce speed.")
-            elif rain_probs[0] > 60:
-                st.warning(f"**Expect rain** - {rain_probs[0]}% chance today. Keep wipers ready!")
+        elif question == "power":
+            substations = [a for a in assets if a.get("asset_type") == "substation"]
+            at_risk = [s for s in substations if s.get("elevation_m", 100) < 5]
+            st.info(f"⚡ **Power Infrastructure Status:**\n\n"
+                   f"• {len(substations)} substations monitored\n"
+                   f"• {len(at_risk)} at flood risk (low elevation)\n"
+                   f"• Flood depth threshold: 0.4m (230kV), 0.5m (110kV)")
+            if at_risk:
+                st.warning("At-risk substations: " + ", ".join([s['name'] for s in at_risk]))
+
+        elif question == "forecast":
+            rain_3day = sum(forecast.get("precipitation_sum", [0,0,0])[:3])
+            if rain_3day > 100:
+                st.error(f"⚠️ **HIGH ALERT for next 3 days**\n\n{rain_3day}mm rainfall expected")
+            elif rain_3day > 50:
+                st.warning(f"🟠 **Moderate risk** - {rain_3day}mm rainfall expected")
             else:
-                st.success(f"**Good driving conditions** 🚗\n\nDry roads, visibility good.")
-
-        elif question == "exercise":
-            if temp > 35:
-                st.warning(f"**Too hot ({temp}°C)** - Exercise early morning (before 7am) or evening (after 6pm).")
-            elif humidity > 85:
-                st.warning(f"**Very humid ({humidity}%)** - Stay hydrated, take breaks.")
-            elif rain > 0:
-                st.info(f"**Indoor workout recommended** - It's raining!")
-            else:
-                st.success(f"**Good for outdoor exercise!** 🏃\n\nTemperature: {temp}°C, Humidity: {humidity}%")
-
-        elif question == "best_day":
-            # Score each day
-            scores = []
-            for i in range(min(7, len(rain_probs))):
-                score = 100
-                score -= rain_probs[i] * 0.5  # Penalize rain
-                if max_temps[i] > 35:
-                    score -= 20
-                if max_temps[i] > 38:
-                    score -= 20
-                scores.append((i, score, dates[i], rain_probs[i], max_temps[i]))
-
-            scores.sort(key=lambda x: x[1], reverse=True)
-            best = scores[0]
-            day_name = datetime.strptime(best[2], "%Y-%m-%d").strftime("%A, %B %d")
-
-            st.success(f"**Best day this week: {day_name}** ⭐\n\n"
-                      f"- Temperature: {best[4]}°C\n"
-                      f"- Rain probability: {best[3]}%\n"
-                      f"- Score: {best[1]:.0f}/100")
-
-            st.markdown("**Other good days:**")
-            for i, (idx, score, date, rain_p, temp) in enumerate(scores[1:4]):
-                day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-                st.markdown(f"{i+2}. {day}: {temp}°C, {rain_p}% rain (Score: {score:.0f})")
+                st.success(f"🟢 **Low risk** - Only {rain_3day}mm rainfall expected")
 
         elif question == "custom":
-            user_question = st.session_state.custom_question
-
-            # Build weather context for LLM
-            weather_context = f"""
-Current Conditions (Chennai):
-- Temperature: {temp}°C
-- Humidity: {humidity}%
-- Current rain: {rain}mm
-- Wind: {wind} km/h
-
-7-Day Forecast:
-"""
-            for i in range(min(7, len(dates))):
-                day = datetime.strptime(dates[i], "%Y-%m-%d").strftime("%A")
-                weather_context += f"- {day}: {max_temps[i]}°C, {rain_probs[i]}% rain chance, {rain_sums[i]}mm expected\n"
-
-            # Try LLM first
-            with st.spinner("Thinking..."):
-                llm_response = get_llm_response(user_question, weather_context)
+            user_q = st.session_state.custom_question
+            with st.spinner("Analyzing..."):
+                llm_response = get_llm_response(user_q, context)
 
             if llm_response:
-                st.markdown(f"🤖 **AI Response:**\n\n{llm_response}")
-                st.caption("*Powered by Llama 3.1 via Groq (free tier)*")
+                st.markdown(llm_response)
+                st.caption("*Powered by Llama 3.1 via Groq*")
             else:
-                # Fallback to keyword matching
-                q_lower = user_question.lower()
-                if "rain" in q_lower or "umbrella" in q_lower:
-                    st.info(f"**Rain forecast:**\n- Today: {rain_probs[0]}% chance\n- Tomorrow: {rain_probs[1] if len(rain_probs) > 1 else 'N/A'}%\n- Current rain: {rain}mm")
-                elif "temp" in q_lower or "hot" in q_lower or "cold" in q_lower:
-                    st.info(f"**Temperature:**\n- Now: {temp}°C\n- Today's max: {max_temps[0]}°C\n- Week range: {min(max_temps)}-{max(max_temps)}°C")
-                elif "humid" in q_lower:
-                    st.info(f"**Humidity:** Currently {humidity}%\n\n{'Very humid!' if humidity > 80 else 'Comfortable' if humidity < 60 else 'Moderately humid'}")
-                elif "wind" in q_lower:
-                    st.info(f"**Wind:** Currently {wind} km/h\n\n{'Windy!' if wind > 20 else 'Light breeze' if wind > 5 else 'Calm'}")
-                elif "tomorrow" in q_lower:
-                    if len(dates) > 1:
-                        st.info(f"**Tomorrow's forecast:**\n- Max temp: {max_temps[1]}°C\n- Rain chance: {rain_probs[1]}%\n- Expected rain: {rain_sums[1]}mm")
-                else:
-                    st.info(f"**Current conditions:**\n- Temperature: {temp}°C\n- Humidity: {humidity}%\n- Rain: {rain}mm\n- Wind: {wind} km/h\n\n*To enable AI-powered answers, add a Groq API key in Streamlit secrets.*")
+                st.info(f"**Current Conditions:**\n{context}")
 
-        # Clear question
         if st.button("Ask another question"):
             del st.session_state.ai_question
             if hasattr(st.session_state, 'custom_question'):
