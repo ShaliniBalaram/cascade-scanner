@@ -24,25 +24,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# ============ LOADING SCREEN ============
-
-# Show loading message on first run
-if 'app_loaded' not in st.session_state:
-    with st.spinner(""):
-        loading_container = st.empty()
-        loading_container.markdown("""
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 50px;">
-            <h1>Chennai Cascade Scanner</h1>
-            <p style="font-size: 18px; color: #666;">Initializing hazard detection system...</p>
-            <p style="font-size: 14px; color: #888;">Loading satellite data, weather APIs, and infrastructure maps</p>
-            <div style="margin-top: 20px;">
-                <img src="https://raw.githubusercontent.com/streamlit/streamlit/develop/lib/streamlit/static/loading-indicator.gif" width="50" alt="Loading...">
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.session_state.app_loaded = True
-        loading_container.empty()
-
 # ============ DATA LOADING ============
 
 @st.cache_data
