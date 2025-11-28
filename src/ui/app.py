@@ -1134,7 +1134,105 @@ Infrastructure:
                 st.markdown(llm_response)
                 st.caption("*Powered by Llama 3.1 via Groq*")
             else:
-                st.info(f"**Current Conditions:**\n{context}")
+                # Smart fallback - analyze the question and provide summary
+                q_lower = user_q.lower()
+                rain_3day = sum(forecast.get("precipitation_sum", [0,0,0])[:3])
+                flood_area = satellite.get("flood_extent_sqkm", 0)
+                soil_moist = satellite.get("soil_moisture", 0) * 100
+                low_elev_count = len([a for a in assets if a.get('elevation_m', 100) < 5])
+
+                # Flood-related questions
+                if any(word in q_lower for word in ["flood", "cyclone", "rain", "water", "inundat"]):
+                    st.markdown("### 🌊 Flood Risk Analysis")
+
+                    # Calculate overall risk
+                    risk_factors = 0
+                    risk_details = []
+
+                    if rain_3day > 100:
+                        risk_factors += 3
+                        risk_details.append(f"⚠️ **Heavy rainfall expected:** {rain_3day:.0f}mm in 3 days")
+                    elif rain_3day > 50:
+                        risk_factors += 2
+                        risk_details.append(f"🟠 **Significant rainfall:** {rain_3day:.0f}mm expected")
+                    elif rain_3day > 20:
+                        risk_factors += 1
+                        risk_details.append(f"🟡 **Moderate rainfall:** {rain_3day:.0f}mm expected")
+                    else:
+                        risk_details.append(f"🟢 **Low rainfall:** Only {rain_3day:.0f}mm expected")
+
+                    if flood_area > 10:
+                        risk_factors += 2
+                        risk_details.append(f"⚠️ **Existing flooding:** {flood_area:.1f}km² detected by satellite")
+                    elif flood_area > 5:
+                        risk_factors += 1
+                        risk_details.append(f"🟠 **Some water accumulation:** {flood_area:.1f}km² detected")
+                    else:
+                        risk_details.append(f"🟢 **Minimal flooding:** {flood_area:.1f}km² currently")
+
+                    if soil_moist > 40:
+                        risk_factors += 1
+                        risk_details.append(f"🟠 **Soil saturated:** {soil_moist:.0f}% moisture - less absorption capacity")
+                    else:
+                        risk_details.append(f"🟢 **Soil can absorb:** {soil_moist:.0f}% moisture")
+
+                    if low_elev_count > 5:
+                        risk_details.append(f"⚠️ **{low_elev_count} infrastructure assets** in low-elevation (<5m) areas")
+
+                    # Summary verdict
+                    st.markdown("---")
+                    if risk_factors >= 4:
+                        st.error(f"**VERDICT: HIGH FLOOD RISK** 🔴\n\nYes, flooding is likely. {rain_3day:.0f}mm rainfall combined with {flood_area:.1f}km² existing water and saturated soil creates significant flood risk.")
+                    elif risk_factors >= 2:
+                        st.warning(f"**VERDICT: MODERATE FLOOD RISK** 🟠\n\nPossible localized flooding in low-lying areas. Monitor conditions closely. {low_elev_count} assets in vulnerable zones.")
+                    else:
+                        st.success(f"**VERDICT: LOW FLOOD RISK** 🟢\n\nUnlikely to see significant flooding. Only {rain_3day:.0f}mm rain expected and current conditions are stable.")
+
+                    st.markdown("---")
+                    st.markdown("**Risk Factors:**")
+                    for detail in risk_details:
+                        st.markdown(detail)
+
+                # Drought questions
+                elif any(word in q_lower for word in ["drought", "dry", "water shortage"]):
+                    hist = get_historical_weather(30)
+                    total_rain = sum(hist.get("precipitation_sum", [0])) if hist.get("precipitation_sum") else 0
+
+                    st.markdown("### 🏜️ Drought Analysis")
+                    if total_rain < 20 and soil_moist < 25:
+                        st.error(f"**VERDICT: DROUGHT CONDITIONS** 🔴\n\nOnly {total_rain:.0f}mm rain in 30 days, soil moisture at {soil_moist:.0f}%")
+                    elif total_rain < 50:
+                        st.warning(f"**VERDICT: DRY CONDITIONS** 🟠\n\n{total_rain:.0f}mm rain in 30 days - below normal")
+                    else:
+                        st.success(f"**VERDICT: ADEQUATE MOISTURE** 🟢\n\n{total_rain:.0f}mm rain in 30 days")
+
+                # Infrastructure questions
+                elif any(word in q_lower for word in ["hospital", "power", "road", "infrastructure", "safe"]):
+                    at_risk = [a for a in assets if a.get("elevation_m", 100) < 5]
+                    st.markdown("### 🏗️ Infrastructure Analysis")
+                    if flood_risk['depth_m'] > 0.3 and at_risk:
+                        st.warning(f"**{len(at_risk)} assets at potential risk** due to low elevation")
+                        for a in at_risk[:5]:
+                            st.write(f"• {a['name']} ({a.get('elevation_m')}m)")
+                    else:
+                        st.success(f"**All {len(assets)} monitored assets currently safe**")
+
+                # General weather
+                else:
+                    st.markdown("### 📊 Summary")
+                    st.info(f"""**Current Status for Chennai:**
+
+🌡️ Temperature: {weather.get('temperature_2m', 'N/A')}°C
+💧 Humidity: {weather.get('relative_humidity_2m', 'N/A')}%
+🌧️ 3-day rainfall forecast: {rain_3day:.0f}mm
+🛰️ Satellite flood detection: {flood_area:.1f}km²
+🌊 Flood risk: {flood_risk['risk_level'].upper()}
+
+**For specific analysis, try asking:**
+- "Will it flood after the cyclone?"
+- "Are hospitals at risk?"
+- "Is there drought risk?"
+""")
 
         if st.button("Ask another question"):
             del st.session_state.ai_question
