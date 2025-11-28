@@ -1065,8 +1065,7 @@ At-risk assets: {at_risk} of {len(assets)}
     # ============ FOOTER ============
     st.markdown("""
     <div class="app-footer">
-        Built by <span class="footer-author">Dr Shalini B</span> ·
-        <a href="https://github.com/ShaliniBalaram/cascade-scanner" target="_blank">View on GitHub</a>
+        Built by <span class="footer-author">Dr Shalini B</span>
     </div>
     """, unsafe_allow_html=True)
 
